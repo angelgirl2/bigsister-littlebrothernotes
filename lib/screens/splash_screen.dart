@@ -83,7 +83,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                     ),
                   ),
                   const SizedBox(height: 32),
-                  SlideTransition(position: _titleSlide, child: FadeTransition(opacity: _titleFade, child: Column(children: [const Text('For Big Sister', style: TextStyle(fontSize: 31, fontWeight: FontWeight.w900, letterSpacing: .2)), const SizedBox(height: 7), const Text('❤️  🫂', style: TextStyle(fontSize: 27)), const SizedBox(height: 15), Text('یادداشت‌هایی از دل برای یک خواهر خاص', style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 14.5))]))),
+                  SlideTransition(position: _titleSlide, child: FadeTransition(opacity: _titleFade, child: Column(children: [const Text('Big Sister & Little Brother', style: TextStyle(fontSize: 31, fontWeight: FontWeight.w900, letterSpacing: .2)), const SizedBox(height: 7), const Text('❤️  🫂', style: TextStyle(fontSize: 27)), const SizedBox(height: 15), Text('یادداشت‌هایی از دل برای آبجی بزرگ و داداش کوچیکه', style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 14.5))]))),
                   const SizedBox(height: 44),
                   FadeTransition(opacity: _loader, child: Column(children: [SizedBox(width: 190, child: ClipRRect(borderRadius: BorderRadius.circular(20), child: LinearProgressIndicator(value: _loader.value, minHeight: 5, backgroundColor: Colors.white.withValues(alpha: .08), valueColor: AlwaysStoppedAnimation(widget.primary)))), const SizedBox(height: 14), Text('در حال آماده‌سازی خاطره‌ها...', style: TextStyle(color: widget.primary.withValues(alpha: .78), fontSize: 12.5))])),
                 ]),

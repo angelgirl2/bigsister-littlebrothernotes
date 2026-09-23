@@ -71,9 +71,9 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://notes.examp
 ```
 
 ## Pairing
-1. گوشی اول: تنظیمات → «دفتر دوطرفه من ↔ آبجی» → نقش «من» → ساخت دفتر.
+ورود جدید فقط با رمز انجام می‌شود: داداش کوچیکه رمز خودش را وارد می‌کند.
 2. کد ۸ کاراکتری و PIN شش‌رقمی را به گوشی دوم بده.
-3. گوشی دوم: همان صفحه → نقش «آبجی» → وارد کردن Code + PIN.
+3. گوشی دوم: همان صفحه → رمز آبجی بزرگ → وارد کردن Code + PIN.
 4. پس از Pair شدن، Sync خودکار فعال می‌شود.
 
 ## نکات مهم امنیتی
@@ -97,7 +97,7 @@ The app does not use a pairing code or pairing PIN. The server owns two accounts
 - PostgreSQL
 - API از همین repository
 
-روی API متغیرهای `DATABASE_URL`, `JWT_SECRET`, `ME_PASSWORD`, `SISTER_PASSWORD` و بقیه متغیرهای `.env.example` را تنظیم کن. `DATABASE_URL` را با Reference Variable به `Postgres.DATABASE_URL` وصل کن. `PORT` را دستی تنظیم نکن.
+روی API متغیرهای `DATABASE_URL`, `JWT_SECRET`, `LITTLE_BROTHER_PASSWORD`, `BIG_SISTER_PASSWORD` و بقیه متغیرهای `.env.example` را تنظیم کن. `DATABASE_URL` را با Reference Variable به `Postgres.DATABASE_URL` وصل کن. `PORT` را دستی تنظیم نکن.
 
 برای فایل‌های عکس/صدا/فایل یک Railway Volume با mount path زیر بساز:
 

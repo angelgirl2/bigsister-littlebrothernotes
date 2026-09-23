@@ -61,3 +61,36 @@ class CloudMember {
         lastSeenAt: json['last_seen_at'] == null ? null : DateTime.tryParse(json['last_seen_at'].toString()),
       );
 }
+
+
+class CloudLetter {
+  CloudLetter({
+    required this.id,
+    required this.senderId,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    this.readAt,
+  });
+
+  final String id;
+  final String senderId;
+  final String title;
+  final String body;
+  final DateTime createdAt;
+  final DateTime? readAt;
+
+  bool get isRead => readAt != null;
+
+  factory CloudLetter.fromJson(Map<String, dynamic> json) {
+    DateTime? parse(Object? value) => value == null ? null : DateTime.tryParse(value.toString());
+    return CloudLetter(
+      id: json['id']?.toString() ?? '',
+      senderId: json['sender_id']?.toString() ?? json['senderId']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      body: json['body']?.toString() ?? '',
+      createdAt: parse(json['created_at'] ?? json['createdAt']) ?? DateTime.now(),
+      readAt: parse(json['read_at'] ?? json['readAt']),
+    );
+  }
+}

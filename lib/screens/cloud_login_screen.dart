@@ -5,6 +5,32 @@ import '../models/app_models.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
+class _LoginRoleHint extends StatelessWidget {
+  const _LoginRoleHint();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: Colors.white.withValues(alpha: .04),
+          border: Border.all(color: Colors.white.withValues(alpha: .07)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.lock_person_rounded, color: Colors.white70),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'ورود خودکار است: رمز آبجی بزرگ یا رمز داداش کوچیکه مشخص می‌کند چه کسی وارد شده است.',
+                style: TextStyle(color: Colors.white70, height: 1.5),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 class CloudSharedLoginScreen extends StatefulWidget {
   const CloudSharedLoginScreen({super.key, required this.storage, required this.theme});
 
@@ -17,26 +43,17 @@ class CloudSharedLoginScreen extends StatefulWidget {
 
 class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
   final CloudService cloud = CloudService.instance;
-  late final TextEditingController server;
   final password = TextEditingController();
-  String role = 'me';
   bool busy = false;
   String? status;
 
   @override
   void initState() {
     super.initState();
-    server = TextEditingController(
-      text: cloud.baseUrl?.isNotEmpty == true
-          ? cloud.baseUrl!
-          : const String.fromEnvironment('BIG_SISTER_API_URL', defaultValue: ''),
-    );
-    if (cloud.role != null) role = cloud.role!;
   }
 
   @override
   void dispose() {
-    server.dispose();
     password.dispose();
     super.dispose();
   }
@@ -44,17 +61,11 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
   String _errorText(Object error) {
     final raw = error.toString();
     if (raw.contains('invalid_login')) return 'رمز ورود اشتباه است.';
+    if (raw.contains('duplicate_passwords')) return 'دو رمز نباید یکسان باشند.';
+    if (raw.contains('server_not_ready') || raw.contains('database_not_ready') || raw.contains('database_unavailable')) return 'سرور دفتر مشترک آماده نیست؛ Railway و PostgreSQL را بررسی کن.';
+    if (raw.contains('DioException') || raw.contains('SocketException') || raw.contains('connection')) return 'ارتباط با سرور برقرار نشد. وضعیت Railway را بررسی کن.';
     if (raw.contains('server_credentials_missing')) return 'حساب‌های دفتر روی سرور تنظیم نشده‌اند.';
     return 'اتصال به Railway برقرار نشد. آدرس سرویس و اینترنت را بررسی کن.';
-  }
-
-  Future<bool> _prepareServer() async {
-    if (server.text.trim().isEmpty) {
-      setState(() => status = 'آدرس Railway را وارد کن.');
-      return false;
-    }
-    await cloud.setServerUrl(server.text.trim());
-    return true;
   }
 
   Future<void> login() async {
@@ -68,8 +79,7 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
       status = null;
     });
     try {
-      if (!await _prepareServer()) return;
-      await cloud.login(role: role, password: password.text.trim());
+      await cloud.login(password: password.text.trim());
       await cloud.pullAndApply(widget.storage);
       await cloud.syncNow(widget.storage);
       if (mounted) setState(() => status = 'اتصال مشترک فعال شد ❤️🫂');
@@ -103,7 +113,7 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
     return Scaffold(
       backgroundColor: AppPalette.page,
       appBar: AppBar(
-        title: const Text('دفتر مشترک من و آبجی'),
+        title: const Text('دفتر مشترک آبجی بزرگ و داداش کوچیکه'),
         backgroundColor: Colors.transparent,
       ),
       body: ListView(
@@ -120,10 +130,10 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
               children: [
                 Icon(Icons.people_alt_rounded, color: c.primary, size: 54),
                 const SizedBox(height: 12),
-                const Text('من ↔ آبجی', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
+                const Text('آبجی بزرگ ↔ داداش کوچیکه', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 const Text(
-                  'هر چیزی که تو یا آبجی بنویسید، عکس بگذارید، صدا بفرستید یا در چت ارسال کنید، خودکار روی هر دو گوشی دیده می‌شود.',
+                  'یادداشت‌ها، چت و نامه‌ها بین آبجی بزرگ و داداش کوچیکه مستقیم روی هر دو گوشی دیده می‌شوند. هیچ کد جفت‌سازی یا آدرس جداگانه‌ای لازم نیست.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white60, height: 1.6),
                 ),
@@ -131,32 +141,16 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          TextField(
-            controller: server,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(
-              labelText: 'آدرس Railway',
-              hintText: 'https://YOUR-APP.up.railway.app',
-              prefixIcon: Icon(Icons.dns_rounded),
-            ),
-          ),
           const SizedBox(height: 14),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'me', label: Text('من'), icon: Icon(Icons.person_rounded)),
-              ButtonSegment(value: 'sister', label: Text('آبجی'), icon: Icon(Icons.favorite_rounded)),
-            ],
-            selected: {role},
-            onSelectionChanged: (s) => setState(() => role = s.first),
-          ),
+          const _LoginRoleHint(),
           const SizedBox(height: 16),
           TextField(
             controller: password,
             obscureText: true,
             textDirection: TextDirection.ltr,
             decoration: const InputDecoration(
-              labelText: 'رمز ورود',
-              hintText: 'رمزی که در Railway برای این شخص تنظیم شده',
+              labelText: 'رمز شخص خودت',
+              hintText: 'رمز آبجی بزرگ یا داداش کوچیکه را وارد کن',
               prefixIcon: Icon(Icons.password_rounded),
             ),
           ),
@@ -168,7 +162,7 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
           ),
           const SizedBox(height: 10),
           Text(
-            'این ورود فقط یک‌بار لازم است. بعد از آن برنامه هنگام اجرا خودش دفتر مشترک را همگام می‌کند و دیگر هیچ کد جفت‌سازی نیاز نیست.',
+            'هر نفر فقط رمز خودش را وارد می‌کند. برنامه از روی رمز تشخیص می‌دهد آبجی بزرگ وارد شده یا داداش کوچیکه؛ آدرس Railway در برنامه نمایش داده نمی‌شود.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white.withValues(alpha: .58), height: 1.55),
           ),

@@ -19,10 +19,10 @@ const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
 const MEDIA_DIR = process.env.MEDIA_DIR || '/data/media';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 25);
 const SHARED_ROOM_KEY = process.env.SHARED_ROOM_KEY || 'big-sister-private-room';
-const ME_PASSWORD = process.env.ME_PASSWORD || '';
-const SISTER_PASSWORD = process.env.SISTER_PASSWORD || '';
-const ME_LABEL = process.env.ME_LABEL || 'من';
-const SISTER_LABEL = process.env.SISTER_LABEL || 'آبجی';
+const LITTLE_BROTHER_PASSWORD = process.env.LITTLE_BROTHER_PASSWORD || process.env.ME_PASSWORD || '';
+const BIG_SISTER_PASSWORD = process.env.BIG_SISTER_PASSWORD || process.env.SISTER_PASSWORD || '';
+const LITTLE_BROTHER_LABEL = process.env.LITTLE_BROTHER_LABEL || process.env.ME_LABEL || 'داداش کوچیکه';
+const BIG_SISTER_LABEL = process.env.BIG_SISTER_LABEL || process.env.SISTER_LABEL || 'آبجی بزرگ';
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
 const pool = new Pool({
   connectionString: DATABASE_URL || undefined,
@@ -177,19 +177,25 @@ async function ensureAccount(roomId, role, password, label) {
 }
 
 app.post('/api/auth/login', async (req, res) => {
-  const role = String(req.body?.role || '');
+  const requestedRole = req.body?.role == null ? null : String(req.body.role);
   const password = String(req.body?.password || '');
-  if (!validateRole(role) || password.length < 4) {
+  if (requestedRole != null && !validateRole(requestedRole) || password.length < 4) {
     return res.status(400).json({ error: 'invalid_login' });
   }
   try {
     const room = await ensureSharedRoom();
-    const label = role === 'me' ? ME_LABEL : SISTER_LABEL;
-    const expected = role === 'me' ? ME_PASSWORD : SISTER_PASSWORD;
-    if (!expected) throw new Error('missing_password');
-    const account = await pool.query('SELECT password_hash FROM accounts WHERE room_id = $1 AND role = $2', [room.id, role]);
-    const hash = account.rows[0]?.password_hash || await bcrypt.hash(expected, 12);
-    if (!(await bcrypt.compare(password, hash))) {
+    let role = requestedRole;
+    if (!role) {
+      const sisterMatch = BIG_SISTER_PASSWORD && password === BIG_SISTER_PASSWORD;
+      const brotherMatch = LITTLE_BROTHER_PASSWORD && password === LITTLE_BROTHER_PASSWORD;
+      if (sisterMatch === brotherMatch) {
+        return res.status(401).json({ error: sisterMatch ? 'duplicate_passwords' : 'invalid_login' });
+      }
+      role = sisterMatch ? 'sister' : 'me';
+    }
+    const label = role === 'me' ? LITTLE_BROTHER_LABEL : BIG_SISTER_LABEL;
+    const expected = role === 'me' ? LITTLE_BROTHER_PASSWORD : BIG_SISTER_PASSWORD;
+    if (!expected || password !== expected) {
       return res.status(401).json({ error: 'invalid_login' });
     }
     const device = await ensureAccount(room.id, role, expected, label);
@@ -232,7 +238,7 @@ app.post('/api/pair/create', async (req, res) => {
   if (!validateRole(role)) return res.status(400).json({ error: 'invalid_role' });
   const code = randomCode(8);
   const pairPin = randomPin();
-  const label = role === 'me' ? 'من' : 'آبجی';
+  const label = role === 'me' ? LITTLE_BROTHER_LABEL : BIG_SISTER_LABEL;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -284,7 +290,7 @@ app.post('/api/pair/join', async (req, res) => {
   const members = await pool.query('SELECT id, role, label FROM devices WHERE room_id = $1', [room.id]);
   if (members.rowCount >= 2) return res.status(409).json({ error: 'room_full' });
   if (members.rows.some(d => d.role === requestedRole)) return res.status(409).json({ error: 'role_taken' });
-  const label = requestedRole === 'me' ? 'من' : 'آبجی';
+  const label = requestedRole === 'me' ? LITTLE_BROTHER_LABEL : BIG_SISTER_LABEL;
   const device = await pool.query(
     'INSERT INTO devices (room_id, role, label) VALUES ($1, $2, $3) RETURNING id, room_id, role, label',
     [room.id, requestedRole, label],
@@ -512,6 +518,47 @@ app.patch('/api/chat/messages/:id/reaction', auth, async (req, res) => {
   return res.json(updated.rows[0]);
 });
 
+app.get('/api/letters', auth, async (req, res) => {
+  await touchDevice(req.user.deviceId);
+  const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 200);
+  const result = await pool.query(
+    `SELECT id, sender_id, title, body, created_at, read_at
+     FROM letters WHERE room_id = $1
+     ORDER BY created_at ASC LIMIT $2`,
+    [req.user.roomId, limit],
+  );
+  return res.json({ letters: result.rows });
+});
+
+app.post('/api/letters', auth, async (req, res) => {
+  await touchDevice(req.user.deviceId);
+  const title = String(req.body?.title || '').trim().slice(0, 255) || 'نامه';
+  const body = String(req.body?.body || '').trim().slice(0, 50000);
+  if (!body) return res.status(400).json({ error: 'letter_body_required' });
+  const id = crypto.randomUUID();
+  const result = await pool.query(
+    `INSERT INTO letters(id, room_id, sender_id, title, body)
+     VALUES ($1,$2,$3,$4,$5)
+     RETURNING id, sender_id, title, body, created_at, read_at`,
+    [id, req.user.roomId, req.user.deviceId, title, body],
+  );
+  const letter = result.rows[0];
+  io.to(`room:${req.user.roomId}`).emit('letter:new', letter);
+  return res.status(201).json({ letter });
+});
+
+app.patch('/api/letters/:id/read', auth, async (req, res) => {
+  const result = await pool.query(
+    `UPDATE letters SET read_at = COALESCE(read_at, now())
+     WHERE id = $1 AND room_id = $2
+     RETURNING id, read_at`,
+    [req.params.id, req.user.roomId],
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'letter_not_found' });
+  io.to(`room:${req.user.roomId}`).emit('letter:read', { id: req.params.id, readAt: result.rows[0].read_at });
+  return res.json(result.rows[0]);
+});
+
 io.use((socket, next) => {
   try {
     const header = socket.handshake.auth?.token || socket.handshake.headers?.authorization || '';
@@ -558,11 +605,11 @@ async function initDb() {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL is missing');
   }
-  if (!ME_PASSWORD) {
-    throw new Error('ME_PASSWORD is missing');
+  if (!LITTLE_BROTHER_PASSWORD) {
+    throw new Error('LITTLE_BROTHER_PASSWORD is missing');
   }
-  if (!SISTER_PASSWORD) {
-    throw new Error('SISTER_PASSWORD is missing');
+  if (!BIG_SISTER_PASSWORD) {
+    throw new Error('BIG_SISTER_PASSWORD is missing');
   }
   if (!JWT_SECRET) {
     throw new Error('JWT_SECRET is missing');
@@ -570,8 +617,8 @@ async function initDb() {
   const sql = await fs.readFile(new URL('../schema.sql', import.meta.url), 'utf8');
   await pool.query(sql);
   const room = await ensureSharedRoom();
-  await ensureAccount(room.id, 'me', ME_PASSWORD, ME_LABEL);
-  await ensureAccount(room.id, 'sister', SISTER_PASSWORD, SISTER_LABEL);
+  await ensureAccount(room.id, 'me', LITTLE_BROTHER_PASSWORD, LITTLE_BROTHER_LABEL);
+  await ensureAccount(room.id, 'sister', BIG_SISTER_PASSWORD, BIG_SISTER_LABEL);
 }
 
 async function initDbWithRetry() {

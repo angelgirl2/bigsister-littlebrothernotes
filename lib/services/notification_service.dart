@@ -35,7 +35,7 @@ class NotificationService {
     final target = tz.TZDateTime.from(when, tz.local);
     if (target.isBefore(tz.TZDateTime.now(tz.local))) return;
     const details = NotificationDetails(
-      android: AndroidNotificationDetails('note_reminders', 'یادآوری یادداشت‌ها', channelDescription: 'یادآوری یادداشت‌های Big Sister Notes', importance: Importance.high, priority: Priority.high),
+      android: AndroidNotificationDetails('note_reminders', 'یادآوری یادداشت‌ها', channelDescription: 'یادآوری یادداشت‌های آبجی بزرگ و داداش کوچیکه', importance: Importance.high, priority: Priority.high),
     );
     await plugin.zonedSchedule(id: _id(noteId), title: 'یادآوری یادداشت ❤️', body: title.isEmpty ? 'یادت نرود به یادداشتت سر بزنی.' : title, scheduledDate: target, notificationDetails: details, androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle, payload: noteId);
   }

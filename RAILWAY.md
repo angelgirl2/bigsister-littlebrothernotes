@@ -43,11 +43,11 @@ ROOM_CODE_TTL_HOURS=24
 SHARED_ROOM_KEY=big-sister-private-room
 
 # اختیاری: اگر اپ را با این مقدار build کنی، آدرس Railway داخل برنامه از قبل قرار می‌گیرد.
-# BIG_SISTER_API_URL=https://YOUR-APP.up.railway.app
-ME_PASSWORD=<رمز نفر اول>
-SISTER_PASSWORD=<رمز نفر دوم>
-ME_LABEL=من
-SISTER_LABEL=آبجی
+# BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
+LITTLE_BROTHER_PASSWORD=<رمز نفر اول>
+BIG_SISTER_PASSWORD=<رمز نفر دوم>
+LITTLE_BROTHER_LABEL=من
+BIG_SISTER_LABEL=آبجی
 ```
 
 اگر اسم سرویس PostgreSQL را چیز دیگری گذاشتی، `Postgres` در Reference Variable را با نام واقعی همان Service عوض کن. Railway برای PostgreSQL متغیر `DATABASE_URL` را در اختیار سرویس قرار می‌دهد. برای اتصال داخلی، از Reference Variable استفاده کن و URL دیتابیس را دستی هاردکد نکن.
@@ -88,7 +88,7 @@ Socket.IO هم از همان دامنه و HTTPS استفاده می‌کند؛ 
 
 ## 6) Deploy
 
-بعد از Deploy فقط یک URL داری و همان URL را روی **هر دو گوشی** استفاده می‌کنی. روی گوشی اول نقش `من` و رمز `ME_PASSWORD` و روی گوشی دوم نقش `آبجی` و رمز `SISTER_PASSWORD` را انتخاب کن. بعد از اولین ورود، نشست ذخیره می‌شود و Socket.IO و همگام‌سازی خودکار فعال هستند.
+بعد از Deploy فقط یک URL داری و همان URL را روی **هر دو گوشی** استفاده می‌کنی. روی گوشی اول رمز `LITTLE_BROTHER_PASSWORD` و روی گوشی دوم رمز `BIG_SISTER_PASSWORD` را انتخاب کن. بعد از اولین ورود، نشست ذخیره می‌شود و Socket.IO و همگام‌سازی خودکار فعال هستند.
 
 بعد از Push به GitHub، Railway خودش Dockerfile ریشه را تشخیص می‌دهد. ساختار Dockerfile ریشه طوری تنظیم شده که فقط Backend را در image قرار دهد:
 
@@ -103,7 +103,7 @@ server/schema.sql
 در مرورگر یا curl:
 
 ```text
-https://YOUR-RAILWAY-DOMAIN/api/health
+https://bigsister-littlebrothernotes.up.railway.app/api/health
 ```
 
 پاسخ سالم:
@@ -118,7 +118,7 @@ https://YOUR-RAILWAY-DOMAIN/api/health
 همچنین ریشه سرویس:
 
 ```text
-https://YOUR-RAILWAY-DOMAIN/
+https://bigsister-littlebrothernotes.up.railway.app/
 ```
 
 یک JSON ساده برای تست برمی‌گرداند.
@@ -129,7 +129,7 @@ https://YOUR-RAILWAY-DOMAIN/
 اگر URL Railway را از قبل داری، APK را این‌طور بساز تا لازم نباشد آدرس را هر بار دستی وارد کنی:
 
 ```bash
-flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-APP.up.railway.app
+flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 هر دو گوشی می‌توانند همین APK را نصب کنند؛ فقط نقش و رمز ورود هر کدام متفاوت است.
@@ -141,7 +141,7 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-APP.up
 و URL سرویس Railway را وارد کن:
 
 ```text
-https://YOUR-RAILWAY-DOMAIN
+https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 بعد نقش `من` یا `آبجی` و رمز مربوطه را انتخاب کن.
@@ -149,7 +149,7 @@ https://YOUR-RAILWAY-DOMAIN
 برای Build با URL ثابت هم می‌توانی استفاده کنی:
 
 ```bash
-flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-RAILWAY-DOMAIN
+flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 ## 9) چه چیزهایی بین دو گوشی مشترک است؟
@@ -185,8 +185,8 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-RAILWA
 این موارد را داخل Git commit نکن:
 
 - `JWT_SECRET`
-- `ME_PASSWORD`
-- `SISTER_PASSWORD`
+- `LITTLE_BROTHER_PASSWORD`
+- `BIG_SISTER_PASSWORD`
 - `DATABASE_URL`
 - هر credential دیگری
 
@@ -201,8 +201,8 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-RAILWA
 ```text
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 JWT_SECRET=<یک secret واقعی و طولانی>
-ME_PASSWORD=<رمز نفر اول>
-SISTER_PASSWORD=<رمز نفر دوم>
+LITTLE_BROTHER_PASSWORD=<رمز نفر اول>
+BIG_SISTER_PASSWORD=<رمز نفر دوم>
 ```
 
 اسم `Postgres` در Reference Variable باید دقیقاً با اسم Service دیتابیس تو یکی باشد. Railway برای Postgres متغیرهای `DATABASE_URL` و `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` را ارائه می‌کند. اگر `DATABASE_URL` را با Reference Variable وصل کنی، Railway ترتیب استقرار وابستگی را هم مدیریت می‌کند. [Railway PostgreSQL](https://docs.railway.com/databases/postgresql)

@@ -14,8 +14,7 @@ class CloudService {
   CloudService._();
   static final CloudService instance = CloudService._();
 
-  static const _urlKey = 'big_sister_cloud_url_v1';
-  static const _buildUrl = String.fromEnvironment('BIG_SISTER_API_URL', defaultValue: '');
+  static const _buildUrl = String.fromEnvironment('BIG_SISTER_API_URL', defaultValue: 'https://bigsister-littlebrothernotes.up.railway.app');
   static const _tokenKey = 'big_sister_cloud_token_v1';
   static const _roomIdKey = 'big_sister_cloud_room_v1';
   static const _deviceIdKey = 'big_sister_cloud_device_v1';
@@ -25,6 +24,7 @@ class CloudService {
   final FlutterSecureStorage _secure = const FlutterSecureStorage();
   final StreamController<void> _contentChanged = StreamController<void>.broadcast();
   final StreamController<ChatMessage> _messages = StreamController<ChatMessage>.broadcast();
+  final StreamController<CloudLetter> _letters = StreamController<CloudLetter>.broadcast();
   final StreamController<bool> _typing = StreamController<bool>.broadcast();
   final StreamController<Map<String, dynamic>> _presence = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _messageStatus = StreamController<Map<String, dynamic>>.broadcast();
@@ -38,6 +38,7 @@ class CloudService {
 
   Stream<void> get contentChanges => _contentChanged.stream;
   Stream<ChatMessage> get incomingMessages => _messages.stream;
+  Stream<CloudLetter> get incomingLetters => _letters.stream;
   Stream<bool> get typingChanges => _typing.stream;
   Stream<Map<String, dynamic>> get presenceChanges => _presence.stream;
   Stream<Map<String, dynamic>> get messageStatusChanges => _messageStatus.stream;
@@ -63,10 +64,7 @@ class CloudService {
   Future<void> init() async {
     if (_initialized) return;
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString(_urlKey);
-    if ((_baseUrl == null || _baseUrl!.trim().isEmpty) && _buildUrl.trim().isNotEmpty) {
-      _baseUrl = _buildUrl.trim();
-    }
+    _baseUrl = _buildUrl.trim();
     _role = prefs.getString(_roleKey);
     _label = prefs.getString(_labelKey);
     _dio = _makeDio(_baseUrl?.trim() ?? '');
@@ -88,20 +86,15 @@ class CloudService {
     return url;
   }
 
-  Future<void> setServerUrl(String value) async {
+  Future<Map<String, dynamic>> login({required String password}) async {
     await init();
-    var url = value.trim();
-    while (url.endsWith('/')) url = url.substring(0, url.length - 1);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_urlKey, url);
-    _baseUrl = url;
-    _dio = _makeDio(url);
-  }
-
-  Future<Map<String, dynamic>> login({required String role, required String password}) async {
-    await init();
+    if (_dio == null || normalizedBaseUrl.isEmpty) throw StateError('server_url_missing');
+    final health = await _dio!.get('/api/health');
+    if (health.statusCode != 200) {
+      final detail = health.data is Map ? health.data['error']?.toString() : null;
+      throw StateError(detail ?? 'server_not_ready');
+    }
     final response = await _dio!.post('/api/auth/login', data: {
-      'role': role,
       'password': password,
     });
     _ensureOk(response);
@@ -168,6 +161,11 @@ class CloudService {
       ..on('chat:message', (data) {
         try {
           if (data is Map) _messages.add(ChatMessage.fromJson(Map<String, dynamic>.from(data)));
+        } catch (_) {}
+      })
+      ..on('letter:new', (data) {
+        try {
+          if (data is Map) _letters.add(CloudLetter.fromJson(Map<String, dynamic>.from(data)));
         } catch (_) {}
       })
       ..on('chat:read', (data) {
@@ -289,6 +287,10 @@ class CloudService {
         options: Options(headers: {'Authorization': 'Bearer $t'}),
       );
       _ensureOk(response);
+      if (!_online) {
+        _online = true;
+        _connectionChanged.add(true);
+      }
       final payload = Map<String, dynamic>.from(response.data['payload'] as Map);
       await storage.applyCloudJson(payload, resolveMedia: _downloadNoteMedia);
       return payload;
@@ -314,6 +316,10 @@ class CloudService {
         options: Options(headers: {'Authorization': 'Bearer $t'}),
       );
       _ensureOk(response);
+      if (!_online) {
+        _online = true;
+        _connectionChanged.add(true);
+      }
       final payload = Map<String, dynamic>.from(response.data['payload'] as Map);
       await storage.applyCloudJson(payload, resolveMedia: _downloadNoteMedia);
       return payload;
@@ -392,6 +398,37 @@ class CloudService {
     return list.map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
+  Future<CloudLetter> sendLetter({required String title, required String body}) async {
+    final t = await token;
+    if (t == null || t.isEmpty) throw StateError('Not connected');
+    final response = await _dio!.post(
+      '/api/letters',
+      data: {'title': title.trim().isEmpty ? 'نامه' : title.trim(), 'body': body.trim()},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    return CloudLetter.fromJson(Map<String, dynamic>.from(response.data['letter'] as Map));
+  }
+
+  Future<List<CloudLetter>> fetchLetters({int limit = 100}) async {
+    final t = await token;
+    if (t == null || t.isEmpty) return [];
+    final response = await _dio!.get(
+      '/api/letters',
+      queryParameters: {'limit': limit},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    final list = response.data['letters'] as List? ?? const [];
+    return list.map((e) => CloudLetter.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  Future<void> markLetterRead(String id) async {
+    final t = await token;
+    if (t == null || t.isEmpty) return;
+    await _dio!.patch('/api/letters/$id/read', options: Options(headers: {'Authorization': 'Bearer $t'}));
+  }
+
   String mediaUrl(String id) => '$normalizedBaseUrl/api/media/$id';
 
   Future<List<int>> downloadMediaBytes(String id) async {
@@ -442,6 +479,7 @@ class CloudService {
     _socket?.dispose();
     await _contentChanged.close();
     await _messages.close();
+    await _letters.close();
     await _typing.close();
     await _presence.close();
     await _messageStatus.close();

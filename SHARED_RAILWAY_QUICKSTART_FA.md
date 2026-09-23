@@ -25,10 +25,10 @@ CORS_ORIGIN=*
 MEDIA_DIR=/data/media
 MAX_UPLOAD_MB=25
 SHARED_ROOM_KEY=big-sister-private-room
-ME_PASSWORD=<رمز من>
-SISTER_PASSWORD=<رمز آبجی>
-ME_LABEL=من
-SISTER_LABEL=آبجی
+LITTLE_BROTHER_PASSWORD=<رمز من>
+BIG_SISTER_PASSWORD=<رمز آبجی>
+LITTLE_BROTHER_LABEL=من
+BIG_SISTER_LABEL=آبجی
 ```
 
 `PORT` را دستی نگذار.
@@ -54,13 +54,13 @@ https://big-sister-api.up.railway.app
 گوشی اول:
 
 ```text
-دفتر مشترک → من → رمز ME_PASSWORD
+دفتر مشترک → من → رمز LITTLE_BROTHER_PASSWORD
 ```
 
 گوشی دوم:
 
 ```text
-دفتر مشترک → آبجی → رمز SISTER_PASSWORD
+دفتر مشترک → آبجی → رمز BIG_SISTER_PASSWORD
 ```
 
 هر دو باید **همان URL Railway** را داشته باشند.

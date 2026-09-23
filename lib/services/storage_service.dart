@@ -138,7 +138,7 @@ class StorageService {
     prefs.setInt(quoteAtKey, current.millisecondsSinceEpoch);
     return next % count;
   }
-  String get fixedName => 'خواهر بزرگم';
+  String get fixedName => 'آبجی بزرگم';
   String? loadPin() => prefs.getString(pinKey);
   Future<void> savePin(String pin) => prefs.setString(pinKey, pin);
   Future<void> clearPin() => prefs.remove(pinKey);

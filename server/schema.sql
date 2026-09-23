@@ -74,3 +74,15 @@ CREATE TABLE IF NOT EXISTS accounts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(room_id, role)
 );
+
+
+CREATE TABLE IF NOT EXISTS letters (
+  id UUID PRIMARY KEY,
+  room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  sender_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_letters_room_created ON letters(room_id, created_at ASC);

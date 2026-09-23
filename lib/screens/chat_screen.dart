@@ -159,7 +159,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) {
       if (mounted) {
         composer.text = text;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال انجام نشد؛ اتصال VPS را بررسی کن.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')));
       }
     } finally {
       if (mounted) setState(() => sending = false);
@@ -209,7 +209,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottom();
       }
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم و اتصال VPS را بررسی کن.')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم فایل و اتصال دفتر مشترک را بررسی کن.')));
     } finally {
       try {
         final f = File(path);
@@ -298,7 +298,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(cloud.role == 'me' ? 'آبجی بزرگم' : 'خواهرم', style: const TextStyle(fontWeight: FontWeight.w900)),
+                  Text(cloud.role == 'me' ? 'داداش کوچیکه' : 'آبجی بزرگم', style: const TextStyle(fontWeight: FontWeight.w900)),
                   Text(otherTyping ? 'در حال نوشتن…' : (otherOnline ? 'آنلاین' : 'آفلاین'), style: TextStyle(fontSize: 11, color: otherTyping || otherOnline ? c.primary : Colors.white54)),
                 ],
               ),
@@ -522,7 +522,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 minLines: 1,
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(hintText: 'برای آبجی بنویس…', filled: true),
+                decoration: const InputDecoration(hintText: 'برای نفر مقابلت بنویس…', filled: true),
               ),
             ),
             const SizedBox(width: 4),

@@ -13,7 +13,7 @@ cd server
 cp .env.example .env
 ```
 
-در `.env` مقدارهای `POSTGRES_PASSWORD`، `JWT_SECRET`، `SHARED_ROOM_KEY`، `ME_PASSWORD` و `SISTER_PASSWORD` را تنظیم کن. سپس:
+در `.env` مقدارهای `POSTGRES_PASSWORD`، `JWT_SECRET`، `SHARED_ROOM_KEY`، `LITTLE_BROTHER_PASSWORD` و `BIG_SISTER_PASSWORD` را تنظیم کن. سپس:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
@@ -22,7 +22,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 تست:
 
 ```bash
-curl https://YOUR-APP.up.railway.app/api/health
+curl https://bigsister-littlebrothernotes.up.railway.app/api/health
 ```
 
 ### روی هر دو گوشی
@@ -54,5 +54,5 @@ curl https://YOUR-APP.up.railway.app/api/health
 flutter clean
 flutter pub get
 flutter analyze
-flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-APP.up.railway.app
+flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
 ```

@@ -20,8 +20,8 @@
 
 Railway دو حساب دارد:
 
-- `ME_PASSWORD` برای «من»
-- `SISTER_PASSWORD` برای «آبجی»
+- `LITTLE_BROTHER_PASSWORD` برای «من»
+- `BIG_SISTER_PASSWORD` برای «آبجی»
 
 این رمزها فقط روی Railway قرار می‌گیرند و داخل APK نوشته نمی‌شوند. هر دو حساب به یک فضای مشترک واحد متصل هستند.
 
@@ -38,8 +38,8 @@ cp .env.example .env
 POSTGRES_PASSWORD=یک-رمز-قوی
 JWT_SECRET=یک-راز-طولانی-و-تصادفی
 SHARED_ROOM_KEY=یک-کلید-داخلی-تصادفی
-ME_PASSWORD=رمز-حساب-من
-SISTER_PASSWORD=رمز-حساب-آبجی
+LITTLE_BROTHER_PASSWORD=رمز-حساب-من
+BIG_SISTER_PASSWORD=رمز-حساب-آبجی
 ```
 
 سپس:
