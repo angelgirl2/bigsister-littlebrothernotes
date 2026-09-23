@@ -1,0 +1,21 @@
+{
+  "name": "big-sister-sync-server",
+  "private": true,
+  "version": "6.2.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "3.0.2",
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "helmet": "8.3.0",
+    "jsonwebtoken": "9.0.3",
+    "multer": "2.4.0",
+    "pg": "8.23.0",
+    "socket.io": "4.8.3"
+  }
+}

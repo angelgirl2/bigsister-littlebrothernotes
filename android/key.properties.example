@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties only on your own build machine.
+# Keep the real values out of Git and shared archives.
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=YOUR_KEY_ALIAS
+storeFile=keystore/YOUR_KEYSTORE.jks
