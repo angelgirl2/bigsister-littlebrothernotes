@@ -191,3 +191,27 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://YOUR-RAILWA
 - هر credential دیگری
 
 این‌ها باید در Railway Variables باشند.
+
+## 12) اگر PostgreSQL تازه ساخته شد و API Crash/Restart شد
+
+در این نسخه Backend طوری اصلاح شده که اتصال اولیه به PostgreSQL را retry می‌کند و دیگر صرفاً به خاطر آماده نبودن لحظه‌ای دیتابیس، Node را terminate نمی‌کند.
+
+اگر Healthcheck روی `/api/health` همچنان `503` می‌دهد، این Variables را در **Service API** بررسی کن:
+
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+JWT_SECRET=<یک secret واقعی و طولانی>
+ME_PASSWORD=<رمز نفر اول>
+SISTER_PASSWORD=<رمز نفر دوم>
+```
+
+اسم `Postgres` در Reference Variable باید دقیقاً با اسم Service دیتابیس تو یکی باشد. Railway برای Postgres متغیرهای `DATABASE_URL` و `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` را ارائه می‌کند. اگر `DATABASE_URL` را با Reference Variable وصل کنی، Railway ترتیب استقرار وابستگی را هم مدیریت می‌کند. [Railway PostgreSQL](https://docs.railway.com/databases/postgresql)
+
+در Logs سرویس API باید در حالت سالم این پیام را ببینی:
+
+```text
+Big Sister sync server listening on <PORT>
+PostgreSQL is ready and the shared room is initialized.
+```
+
+اگر خطایی وجود داشته باشد، سرویس زنده می‌ماند و در Logs متن دقیق‌تری مثل `DATABASE_URL is missing` یا `JWT_SECRET is missing` یا خطای اتصال PostgreSQL ثبت می‌شود.

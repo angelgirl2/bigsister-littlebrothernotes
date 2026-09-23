@@ -15,10 +15,7 @@ import { Server as SocketIOServer } from 'socket.io';
 const { Pool } = pg;
 const PORT = Number(process.env.PORT || 3000);
 const ROOM_CODE_TTL_HOURS = Number(process.env.ROOM_CODE_TTL_HOURS || 24);
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-in-production';
-if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'change-me-in-production') {
-  throw new Error('JWT_SECRET must be set in production');
-}
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
 const MEDIA_DIR = process.env.MEDIA_DIR || '/data/media';
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 25);
 const SHARED_ROOM_KEY = process.env.SHARED_ROOM_KEY || 'big-sister-private-room';
@@ -26,7 +23,15 @@ const ME_PASSWORD = process.env.ME_PASSWORD || '';
 const SISTER_PASSWORD = process.env.SISTER_PASSWORD || '';
 const ME_LABEL = process.env.ME_LABEL || 'من';
 const SISTER_LABEL = process.env.SISTER_LABEL || 'آبجی';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
+const pool = new Pool({
+  connectionString: DATABASE_URL || undefined,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000,
+  max: 10,
+});
+let dbReady = false;
+let dbInitError = null;
 
 const app = express();
 const server = http.createServer(app);
@@ -41,7 +46,6 @@ app.use(express.json({ limit: '120mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 await fs.mkdir(MEDIA_DIR, { recursive: true });
-await initDb();
 
 const upload = multer({
   dest: MEDIA_DIR,
@@ -205,11 +209,21 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/', (_req, res) => res.json({ service: 'big-sister-sync', health: '/api/health' }));
 
 app.get('/api/health', async (_req, res) => {
+  if (!dbReady) {
+    return res.status(503).json({
+      ok: false,
+      service: 'big-sister-sync',
+      status: 'starting',
+      error: dbInitError || 'database_not_ready',
+    });
+  }
   try {
     await pool.query('SELECT 1');
     return res.json({ ok: true, service: 'big-sister-sync', time: new Date().toISOString() });
-  } catch {
-    return res.status(503).json({ ok: false });
+  } catch (e) {
+    dbReady = false;
+    dbInitError = 'database_unavailable';
+    return res.status(503).json({ ok: false, service: 'big-sister-sync', status: 'database_unavailable' });
   }
 });
 
@@ -537,12 +551,46 @@ io.on('connection', async (socket) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Big Sister sync server listening on ${PORT}`);
+  void initDbWithRetry();
 });
 
 async function initDb() {
+  if (!DATABASE_URL) {
+    throw new Error('DATABASE_URL is missing');
+  }
+  if (!ME_PASSWORD) {
+    throw new Error('ME_PASSWORD is missing');
+  }
+  if (!SISTER_PASSWORD) {
+    throw new Error('SISTER_PASSWORD is missing');
+  }
+  if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET is missing');
+  }
   const sql = await fs.readFile(new URL('../schema.sql', import.meta.url), 'utf8');
   await pool.query(sql);
   const room = await ensureSharedRoom();
   await ensureAccount(room.id, 'me', ME_PASSWORD, ME_LABEL);
   await ensureAccount(room.id, 'sister', SISTER_PASSWORD, SISTER_LABEL);
+}
+
+async function initDbWithRetry() {
+  const maxAttempts = 30;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await initDb();
+      dbReady = true;
+      dbInitError = null;
+      console.log('PostgreSQL is ready and the shared room is initialized.');
+      return;
+    } catch (error) {
+      dbReady = false;
+      dbInitError = error instanceof Error ? error.message : String(error);
+      console.error(`Database initialization attempt ${attempt}/${maxAttempts} failed: ${dbInitError}`);
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+    }
+  }
+  console.error('Database initialization did not succeed. The service will stay alive and health checks will remain 503 until a redeploy/restart with valid database configuration.');
 }
