@@ -213,31 +213,54 @@ class _CloudSharedLoginScreenState extends State<CloudSharedLoginScreen> {
           const SizedBox(height: 14),
           const _LoginRoleHint(),
           const SizedBox(height: 16),
-          TextField(
-            controller: password,
-            obscureText: true,
-            textDirection: TextDirection.ltr,
-            decoration: const InputDecoration(
-              labelText: 'رمز شخص خودت',
-              hintText: 'رمز آبجی بزرگ یا داداش کوچیکه را وارد کن',
-              prefixIcon: Icon(Icons.password_rounded),
+          if (cloud.configured) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                color: c.primary.withValues(alpha: .08),
+                border: Border.all(color: c.primary.withValues(alpha: .16)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.verified_user_rounded, color: c.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'وارد شده‌ای: ${cloud.myDisplayName} ❤️\nرمز روی این دستگاه ذخیره شده و تا وقتی «قطع ارتباط» را نزنی دوباره درخواست نمی‌شود.',
+                      style: const TextStyle(height: 1.55, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: busy ? null : login,
-            icon: const Icon(Icons.login_rounded),
-            label: const Text('ورود و اتصال خودکار'),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'هر نفر فقط رمز خودش را وارد می‌کند. برنامه از روی رمز تشخیص می‌دهد آبجی بزرگ وارد شده یا داداش کوچیکه؛ آدرس Railway در برنامه نمایش داده نمی‌شود.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: .58),
-              height: 1.55,
+          ] else ...[
+            TextField(
+              controller: password,
+              obscureText: true,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(
+                labelText: 'رمز شخص خودت',
+                hintText: 'رمز آبجی بزرگ یا داداش کوچیکه را وارد کن',
+                prefixIcon: Icon(Icons.password_rounded),
+              ),
             ),
-          ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: busy ? null : login,
+              icon: const Icon(Icons.login_rounded),
+              label: const Text('ورود و اتصال خودکار'),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'رمز فقط یک‌بار روی این دستگاه وارد می‌شود. تا وقتی قطع ارتباط نکنی، ورود دوباره لازم نیست.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: .58),
+                height: 1.55,
+              ),
+            ),
+          ],
           if (cloud.configured) ...[
             const SizedBox(height: 18),
             OutlinedButton.icon(

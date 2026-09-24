@@ -518,6 +518,53 @@ app.patch('/api/chat/messages/:id/reaction', auth, async (req, res) => {
   return res.json(updated.rows[0]);
 });
 
+app.delete('/api/chat/messages/:id', auth, async (req, res) => {
+  const messageId = String(req.params.id || '').trim();
+  if (!messageId) return res.status(400).json({ error: 'invalid_message_id' });
+
+  const found = await pool.query(
+    `SELECT id, attachment_id
+     FROM messages
+     WHERE id = $1 AND room_id = $2`,
+    [messageId, req.user.roomId],
+  );
+  const message = found.rows[0];
+  if (!message) return res.status(404).json({ error: 'message_not_found' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'DELETE FROM messages WHERE id = $1 AND room_id = $2',
+      [messageId, req.user.roomId],
+    );
+
+    if (message.attachment_id) {
+      const media = await client.query(
+        'SELECT disk_name FROM media WHERE id = $1 AND room_id = $2',
+        [message.attachment_id, req.user.roomId],
+      );
+      await client.query(
+        'DELETE FROM media WHERE id = $1 AND room_id = $2',
+        [message.attachment_id, req.user.roomId],
+      );
+      const diskName = media.rows[0]?.disk_name;
+      if (diskName) {
+        await fs.rm(path.join(MEDIA_DIR, diskName), { force: true });
+      }
+    }
+
+    await client.query('COMMIT');
+    io.to(`room:${req.user.roomId}`).emit('chat:deleted', { id: messageId });
+    return res.json({ ok: true, id: messageId });
+  } catch {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: 'message_delete_failed' });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/letters', auth, async (req, res) => {
   await touchDevice(req.user.deviceId);
   const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 200);

@@ -33,6 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<bool>? typingSub;
   StreamSubscription<Map<String, dynamic>>? presenceSub;
   StreamSubscription<Map<String, dynamic>>? statusSub;
+  StreamSubscription<String>? deletedSub;
   Timer? typingTimer;
   bool loading = true;
   bool sending = false;
@@ -45,6 +46,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? playingId;
   Duration audioDuration = Duration.zero;
   Duration audioPosition = Duration.zero;
+  final Set<String> selectedIds = <String>{};
 
   @override
   void initState() {
@@ -69,6 +71,13 @@ class _ChatScreenState extends State<ChatScreen> {
         } else if (type == 'delivered') {
           messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: old.reaction, deliveredAt: old.deliveredAt ?? DateTime.now(), readAt: old.readAt);
         }
+      });
+    });
+    deletedSub = cloud.deletedMessages.listen((id) {
+      if (!mounted) return;
+      setState(() {
+        messages.removeWhere((m) => m.id == id);
+        selectedIds.remove(id);
       });
     });
     presenceSub = cloud.presenceChanges.listen((data) {
@@ -141,6 +150,74 @@ class _ChatScreenState extends State<ChatScreen> {
     cloud.setTyping(value.trim().isNotEmpty);
     typingTimer?.cancel();
     typingTimer = Timer(const Duration(milliseconds: 900), () => cloud.setTyping(false));
+  }
+
+  bool get selecting => selectedIds.isNotEmpty;
+
+  void _toggleSelection(ChatMessage message) {
+    setState(() {
+      if (selectedIds.contains(message.id)) {
+        selectedIds.remove(message.id);
+      } else {
+        selectedIds.add(message.id);
+      }
+    });
+  }
+
+  void _clearSelection() {
+    if (selectedIds.isEmpty) return;
+    setState(() => selectedIds.clear());
+  }
+
+  Future<void> _deleteSelected() async {
+    if (selectedIds.isEmpty || sending) return;
+
+    final ids = selectedIds.toList(growable: false);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('حذف پیام‌ها'),
+        content: Text('تعداد ${ids.length} پیام انتخاب شده حذف شود؟ این حذف برای هر دو نفر اعمال می‌شود.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('لغو'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => sending = true);
+    final deleted = <String>[];
+    final failed = <String>[];
+
+    for (final id in ids) {
+      try {
+        await cloud.deleteMessage(id);
+        deleted.add(id);
+      } catch (_) {
+        failed.add(id);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      messages.removeWhere((m) => deleted.contains(m.id));
+      selectedIds.removeAll(deleted);
+      sending = false;
+    });
+
+    if (failed.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${failed.length} پیام حذف نشد.')),
+      );
+    }
   }
 
   Future<void> sendText() async {
@@ -248,6 +325,7 @@ class _ChatScreenState extends State<ChatScreen> {
     typingSub?.cancel();
     presenceSub?.cancel();
     statusSub?.cancel();
+    deletedSub?.cancel();
     composer.dispose();
     scroll.dispose();
     recorder.dispose();
@@ -285,25 +363,48 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: AppPalette.page,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
-          title: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: c.primary.withValues(alpha: .12)),
-                padding: const EdgeInsets.all(5),
-                child: ClipOval(child: Image.asset('assets/logo.png', fit: BoxFit.cover)),
+          leading: selecting
+              ? IconButton(
+                  tooltip: 'لغو انتخاب',
+                  onPressed: _clearSelection,
+                  icon: const Icon(Icons.close_rounded),
+                )
+              : null,
+          title: selecting
+              ? Text(
+                  '${selectedIds.length} پیام انتخاب شده',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                )
+              : Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: c.primary.withValues(alpha: .12)),
+                      padding: const EdgeInsets.all(5),
+                      child: ClipOval(child: Image.asset('assets/logo.png', fit: BoxFit.cover)),
+                    ),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(cloud.otherDisplayName, style: const TextStyle(fontWeight: FontWeight.w900)),
+                        Text(
+                          otherTyping ? 'در حال نوشتن…' : (otherOnline ? 'آنلاین' : 'آفلاین'),
+                          style: TextStyle(fontSize: 11, color: otherTyping || otherOnline ? c.primary : Colors.white54),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+          actions: [
+            if (selecting)
+              IconButton(
+                tooltip: 'حذف پیام‌های انتخاب‌شده',
+                onPressed: sending ? null : _deleteSelected,
+                icon: const Icon(Icons.delete_forever_rounded),
               ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(cloud.role == 'me' ? 'داداش کوچیکه' : 'آبجی بزرگم', style: const TextStyle(fontWeight: FontWeight.w900)),
-                  Text(otherTyping ? 'در حال نوشتن…' : (otherOnline ? 'آنلاین' : 'آفلاین'), style: TextStyle(fontSize: 11, color: otherTyping || otherOnline ? c.primary : Colors.white54)),
-                ],
-              ),
-            ],
-          ),
+          ],
         ),
         body: Column(
           children: [
@@ -361,14 +462,28 @@ class _ChatScreenState extends State<ChatScreen> {
     final mine = message.senderId == myDeviceId;
     final bg = mine ? c.primary.withValues(alpha: .18) : const Color(0xFF0A111C);
     final border = mine ? c.primary.withValues(alpha: .22) : Colors.white.withValues(alpha: .05);
+    final selected = selectedIds.contains(message.id);
     return Align(
       alignment: mine ? Alignment.centerLeft : Alignment.centerRight,
       child: GestureDetector(
-        onDoubleTap: () => cloud.react(
-          message.id,
-          message.reaction == '❤️' ? '' : '❤️',
-        ),
-        child: Container(
+        onLongPress: () => _toggleSelection(message),
+        onTap: selecting ? () => _toggleSelection(message) : null,
+        onDoubleTap: selecting
+            ? null
+            : () => cloud.react(
+                  message.id,
+                  message.reaction == '❤️' ? '' : '❤️',
+                ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          decoration: selected
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(25),
+                  border: Border.all(color: c.primary.withValues(alpha: .7), width: 2),
+                )
+              : null,
+          padding: selected ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          child: Container(
           constraints: const BoxConstraints(maxWidth: 340),
           margin: const EdgeInsets.symmetric(vertical: 5),
           padding: const EdgeInsets.fromLTRB(13, 10, 13, 8),
@@ -470,6 +585,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -513,8 +629,11 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            IconButton(onPressed: sending ? null : sendImage, icon: Icon(Icons.image_rounded, color: c.primary)),
-            IconButton(onPressed: sending ? null : sendAnyFile, icon: Icon(Icons.attach_file_rounded, color: c.secondary)),
+            IconButton(
+              tooltip: 'پیوست',
+              onPressed: sending ? null : _showAttachmentSheet,
+              icon: Icon(Icons.attach_file_rounded, color: c.secondary, size: 27),
+            ),
             Expanded(
               child: TextField(
                 controller: composer,
@@ -522,23 +641,66 @@ class _ChatScreenState extends State<ChatScreen> {
                 minLines: 1,
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(hintText: 'برای نفر مقابلت بنویس…', filled: true),
+                decoration: const InputDecoration(
+                  hintText: 'برای نفر مقابلت بنویس…',
+                  filled: true,
+                ),
               ),
             ),
             const SizedBox(width: 4),
-            if (composer.text.trim().isEmpty)
-              IconButton(
-                onPressed: sending ? null : toggleRecord,
-                icon: Icon(recording ? Icons.stop_circle_rounded : Icons.mic_rounded, color: recording ? Colors.redAccent : c.primary, size: 30),
-              )
-            else
-              IconButton(
-                onPressed: sending ? null : sendText,
-                icon: Icon(Icons.send_rounded, color: c.primary, size: 30),
+            IconButton(
+              tooltip: recording ? 'پایان ضبط' : 'پیام صوتی',
+              onPressed: sending ? null : toggleRecord,
+              icon: Icon(
+                recording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                color: recording ? Colors.redAccent : c.primary,
+                size: 30,
               ),
+            ),
+            IconButton(
+              tooltip: 'فرستادن پیام',
+              onPressed: sending || composer.text.trim().isEmpty ? null : sendText,
+              icon: Icon(
+                Icons.send_rounded,
+                color: composer.text.trim().isEmpty ? Colors.white24 : c.primary,
+                size: 30,
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showAttachmentSheet() async {
+    if (sending) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('انتخاب از گالری'),
+              onTap: () => Navigator.pop(sheetContext, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_rounded),
+              title: const Text('انتخاب فایل'),
+              onTap: () => Navigator.pop(sheetContext, 'file'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == 'gallery') {
+      await sendImage();
+    } else if (choice == 'file') {
+      await sendAnyFile();
+    }
   }
 }

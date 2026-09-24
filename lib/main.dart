@@ -306,6 +306,7 @@ class _MainShellState extends State<MainShell> {
     final pages = [
       HomeTab(
         notes: notes,
+        cloud: CloudService.instance,
         theme: widget.theme,
         quoteIndex: quoteIndex,
         onNew: () => openEditor(),
@@ -565,6 +566,7 @@ class HomeTab extends StatelessWidget {
   const HomeTab({
     super.key,
     required this.notes,
+    required this.cloud,
     required this.theme,
     required this.quoteIndex,
     required this.onNew,
@@ -572,6 +574,7 @@ class HomeTab extends StatelessWidget {
     required this.onOpenNote,
   });
   final List<NoteItem> notes;
+  final CloudService cloud;
   final AppThemeChoice theme;
   final int quoteIndex;
   final VoidCallback onNew;
@@ -579,11 +582,12 @@ class HomeTab extends StatelessWidget {
   final ValueChanged<NoteItem> onOpenNote;
 
   String greeting() {
+    final name = cloud.myDisplayName;
     final h = DateTime.now().hour;
-    if (h < 11) return 'صبح بخیر آبجی بزرگم';
-    if (h < 15) return 'ظهر بخیر خواهر بزرگم';
-    if (h < 19) return 'عصر بخیر آبجی';
-    return 'شب بخیر آبجی بزرگم';
+    if (h < 11) return 'صبح بخیر $name';
+    if (h < 15) return 'ظهر بخیر $name';
+    if (h < 19) return 'عصر بخیر $name';
+    return 'شب بخیر $name';
   }
 
   String _messageForHour() {
@@ -1942,7 +1946,7 @@ class _LettersTabState extends State<LettersTab> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 145),
         children: [
-          const Text('نامه‌های آبجی بزرگ ↔ داداش کوچیکه 💌', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+          Text('نامه‌های ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName} 💌', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
           Text('نامه دیگر یادداشت محلی نیست؛ هر نامه مستقیم برای نفر مقابل ارسال و در دفتر مشترک نگهداری می‌شود.', style: TextStyle(color: Colors.white.withValues(alpha: .52), height: 1.55)),
           const SizedBox(height: 14),
@@ -2079,6 +2083,38 @@ class SettingsTab extends StatefulWidget {
 class _SettingsTabState extends State<SettingsTab> {
   bool bio = false;
   bool lock = false;
+  bool moodSending = false;
+
+  Future<void> _sendMood(String emoji, String label) async {
+    if (moodSending) return;
+    if (!widget.cloud.configured) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('اول دفتر مشترک را یک‌بار متصل کن.')),
+        );
+      }
+      return;
+    }
+
+    setState(() => moodSending = true);
+    try {
+      await widget.cloud.sendText('$emoji $label ❤️');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('حال تو برای ${widget.cloud.otherDisplayName} فرستاده شد ❤️')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ارسال حال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => moodSending = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2300,9 +2336,9 @@ class _SettingsTabState extends State<SettingsTab> {
                       backgroundColor: c.primary.withValues(alpha: .10),
                       child: Icon(Icons.favorite_rounded, color: c.primary),
                     ),
-                    title: const Text(
-                      'آبجی بزرگم ❤️',
-                      style: TextStyle(fontWeight: FontWeight.w900),
+                    title: Text(
+                      '${widget.cloud.myDisplayName} ❤️',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                     //subtitle: const Text(''),
                     //trailing: const Icon(Icons.lock_outline_rounded),
@@ -2333,7 +2369,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(Icons.sync_rounded, color: c.primary),
-                    title: const Text('دفتر مشترک آبجی بزرگ ↔ داداش کوچیکه'),
+                    title: Text('دفتر مشترک ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName}'),
                     subtitle: Text(
                       widget.cloud.configured
                           ? (widget.cloud.online ? 'همگام‌سازی زنده فعال است' : 'دفتر متصل است؛ اتصال لحظه‌ای برقرار نیست')
@@ -2350,6 +2386,77 @@ class _SettingsTabState extends State<SettingsTab> {
                       if (mounted) setState(() {});
                       widget.onRefresh();
                     },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _Glass(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.favorite_rounded, color: c.primary),
+                      const SizedBox(width: 9),
+                      const Expanded(
+                        child: Text(
+                          'حالت من 💗',
+                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      if (moodSending)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    'هر حالتی را انتخاب کنی، به ${widget.cloud.otherDisplayName} به‌صورت پیام مشترک فرستاده می‌شود.',
+                    style: const TextStyle(color: Colors.white60, height: 1.5),
+                  ),
+                  const SizedBox(height: 12),
+                  _MoodButton(
+                    emoji: '😞',
+                    label: 'حالم خوب نیست',
+                    color: c.primary,
+                    enabled: !moodSending,
+                    onTap: () => _sendMood('😞', 'حالم خوب نیست'),
+                  ),
+                  const SizedBox(height: 8),
+                  _MoodButton(
+                    emoji: '😊',
+                    label: 'حالم خوبه',
+                    color: c.primary,
+                    enabled: !moodSending,
+                    onTap: () => _sendMood('😊', 'حالم خوبه'),
+                  ),
+                  const SizedBox(height: 8),
+                  _MoodButton(
+                    emoji: '😍',
+                    label: 'خیلی خوشحالم',
+                    color: c.primary,
+                    enabled: !moodSending,
+                    onTap: () => _sendMood('😍', 'خیلی خوشحالم'),
+                  ),
+                  const SizedBox(height: 8),
+                  _MoodButton(
+                    emoji: '😔',
+                    label: 'ناراحتم',
+                    color: c.primary,
+                    enabled: !moodSending,
+                    onTap: () => _sendMood('😔', 'ناراحتم'),
+                  ),
+                  const SizedBox(height: 8),
+                  _MoodButton(
+                    emoji: '🥺',
+                    label: 'دلگیرم',
+                    color: c.primary,
+                    enabled: !moodSending,
+                    onTap: () => _sendMood('🥺', 'دلگیرم'),
                   ),
                 ],
               ),
@@ -2485,7 +2592,7 @@ class _SettingsTabState extends State<SettingsTab> {
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.favorite_rounded, color: c.primary),
-                title: const Text('برای آبجی بزرگم ❤️🫂'),
+                title: Text('برای ${widget.cloud.myDisplayName} ❤️🫂'),
                 subtitle: const Text('نامه‌ها و جمله‌هایی که مخصوص او هستند'),
                 onTap: () => Navigator.push(
                   context,
@@ -2493,6 +2600,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     builder: (_) => SisterSpaceScreen(
                       storage: widget.storage,
                       theme: widget.theme,
+                      cloud: CloudService.instance,
                       onSaved: widget.onRefresh,
                     ),
                   ),
@@ -2605,16 +2713,67 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 }
 
+
+class _MoodButton extends StatelessWidget {
+  const _MoodButton({
+    required this.emoji,
+    required this.label,
+    required this.color,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final String emoji;
+  final String label;
+  final Color color;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .07),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: color.withValues(alpha: .14)),
+          ),
+          child: Row(
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 25)),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+              ),
+              Icon(Icons.favorite_rounded, color: color, size: 23),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SisterSpaceScreen extends StatelessWidget {
   const SisterSpaceScreen({
     super.key,
     required this.storage,
     required this.theme,
+    required this.cloud,
     this.onSaved,
   });
 
   final StorageService storage;
   final AppThemeChoice theme;
+  final CloudService cloud;
   final VoidCallback? onSaved;
 
   Future<void> _saveHeartLine(
@@ -2701,7 +2860,7 @@ class SisterSpaceScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AppPalette.page,
-      appBar: AppBar(title: const Text('برای آبجی بزرگم ❤️🫂')),
+      appBar: AppBar(title: Text('برای ${cloud.myDisplayName} ❤️🫂')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
         children: [
@@ -2712,8 +2871,8 @@ class SisterSpaceScreen extends StatelessWidget {
                 children: [
                   const _BreathingLogo(color: Color(0xFFFF4D67)),
                   const SizedBox(height: 12),
-                  const Text(
-                    'این بخش فقط برای توست، آبجی بزرگم.',
+                  Text(
+                    'این بخش فقط برای توست، ${cloud.myDisplayName}.',
                     style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
                     textAlign: TextAlign.center,
                   ),

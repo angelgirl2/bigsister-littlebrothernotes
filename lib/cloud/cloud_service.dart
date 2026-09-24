@@ -29,6 +29,7 @@ class CloudService {
   final StreamController<bool> _typing = StreamController<bool>.broadcast();
   final StreamController<Map<String, dynamic>> _presence = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _messageStatus = StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<String> _deletedMessages = StreamController<String>.broadcast();
   final StreamController<bool> _connectionChanged = StreamController<bool>.broadcast();
   IO.Socket? _socket;
   Dio? _dio;
@@ -43,6 +44,7 @@ class CloudService {
   Stream<bool> get typingChanges => _typing.stream;
   Stream<Map<String, dynamic>> get presenceChanges => _presence.stream;
   Stream<Map<String, dynamic>> get messageStatusChanges => _messageStatus.stream;
+  Stream<String> get deletedMessages => _deletedMessages.stream;
   Stream<bool> get connectionChanges => _connectionChanged.stream;
   bool get online => _online;
 
@@ -50,6 +52,16 @@ class CloudService {
   String? get baseUrl => _baseUrl;
   String? get role => _role;
   String? get label => _label;
+
+  /// نام این دستگاه بر اساس حسابی که با آن وارد شده است.
+  String get myDisplayName {
+    final value = _label?.trim();
+    if (value != null && value.isNotEmpty) return value;
+    return _role == 'sister' ? 'آبجی بزرگ' : 'داداش کوچیکه';
+  }
+
+  /// نام نفر مقابل برای نمایش در رابط کاربری.
+  String get otherDisplayName => _role == 'sister' ? 'داداش کوچیکه' : 'آبجی بزرگ';
   String? _role;
   String? _label;
 
@@ -183,6 +195,10 @@ class CloudService {
       })
       ..on('chat:reaction', (data) {
         if (data is Map) _messageStatus.add({'type': 'reaction', ...Map<String, dynamic>.from(data)});
+      })
+      ..on('chat:deleted', (data) {
+        final id = data is Map ? data['id']?.toString() : data?.toString();
+        if (id != null && id.isNotEmpty) _deletedMessages.add(id);
       })
       ..on('typing', (data) {
         if (data is Map) _typing.add(data['typing'] == true);
@@ -461,6 +477,16 @@ class CloudService {
     _socket?.emit('message:read', id);
   }
 
+  Future<void> deleteMessage(String id) async {
+    final t = await token;
+    if (t == null || t.isEmpty) throw StateError('Not connected');
+    final response = await _dio!.delete(
+      '/api/chat/messages/$id',
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+  }
+
   Future<void> react(String id, String reaction) async {
     final t = await token;
     if (t == null) return;
@@ -490,6 +516,7 @@ class CloudService {
     await _typing.close();
     await _presence.close();
     await _messageStatus.close();
+    await _deletedMessages.close();
     await _connectionChanged.close();
   }
 }
