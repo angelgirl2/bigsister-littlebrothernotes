@@ -79,7 +79,7 @@ BIG_SISTER_LABEL=آبجی
 در Service مربوط به API گزینه Generate Domain را بزن. آدرس HTTPS ساخته‌شده را بردار؛ مثلاً:
 
 ```text
-https://big-sister-api.up.railway.app
+https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 همان URL را داخل برنامه Flutter در صفحه «دفتر مشترک» وارد کن.

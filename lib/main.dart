@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -1867,13 +1868,13 @@ class _LettersTabState extends State<LettersTab> {
             children: [
               TextField(
                 controller: titleController,
-                textDirection: TextDirection.rtl,
+                textDirection: ui.TextDirection.rtl,
                 decoration: const InputDecoration(labelText: 'عنوان نامه'),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: bodyController,
-                textDirection: TextDirection.rtl,
+                textDirection: ui.TextDirection.rtl,
                 minLines: 7,
                 maxLines: 12,
                 decoration: const InputDecoration(labelText: 'متن نامه', alignLabelWithHint: true),

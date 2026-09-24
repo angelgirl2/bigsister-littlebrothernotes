@@ -14,7 +14,8 @@ class CloudService {
   CloudService._();
   static final CloudService instance = CloudService._();
 
-  static const _buildUrl = String.fromEnvironment('BIG_SISTER_API_URL', defaultValue: 'https://bigsister-littlebrothernotes.up.railway.app');
+  static const _railwayUrl = 'https://bigsister-littlebrothernotes.up.railway.app';
+  static const _buildUrl = String.fromEnvironment('BIG_SISTER_API_URL', defaultValue: _railwayUrl);
   static const _tokenKey = 'big_sister_cloud_token_v1';
   static const _roomIdKey = 'big_sister_cloud_room_v1';
   static const _deviceIdKey = 'big_sister_cloud_device_v1';
@@ -61,13 +62,21 @@ class CloudService {
         validateStatus: (s) => s != null && s < 500,
       ));
 
+  String _normalizeUrl(String url) {
+    var normalized = url.trim();
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
   Future<void> init() async {
     if (_initialized) return;
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = _buildUrl.trim();
+    _baseUrl = _normalizeUrl(_buildUrl);
     _role = prefs.getString(_roleKey);
     _label = prefs.getString(_labelKey);
-    _dio = _makeDio(_baseUrl?.trim() ?? '');
+    _dio = _makeDio(normalizedBaseUrl);
     _initialized = true;
     if (configured) {
       await _connectSocket();
@@ -89,11 +98,9 @@ class CloudService {
   Future<Map<String, dynamic>> login({required String password}) async {
     await init();
     if (_dio == null || normalizedBaseUrl.isEmpty) throw StateError('server_url_missing');
-    final health = await _dio!.get('/api/health');
-    if (health.statusCode != 200) {
-      final detail = health.data is Map ? health.data['error']?.toString() : null;
-      throw StateError(detail ?? 'server_not_ready');
-    }
+    // Do not block login on a separate health request. Railway can briefly
+    // report a 503 while the app is already able to serve authenticated routes,
+    // and a DNS/health failure would otherwise hide the real login response.
     final response = await _dio!.post('/api/auth/login', data: {
       'password': password,
     });
@@ -137,7 +144,7 @@ class CloudService {
     _socket = IO.io(
       normalizedBaseUrl,
       IO.OptionBuilder()
-          .setTransports(['websocket'])
+          .setTransports(['websocket', 'polling'])
           .setAuth({'token': t})
           .disableAutoConnect()
           .enableForceNew()

@@ -38,7 +38,7 @@ BIG_SISTER_LABEL=آبجی
 در Railway برای API گزینه **Generate Domain** را بزن. مثلاً:
 
 ```text
-https://big-sister-api.up.railway.app
+https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 سپس Healthcheck را روی این مسیر بگذار:
@@ -70,7 +70,7 @@ https://big-sister-api.up.railway.app
 ```bash
 flutter clean
 flutter pub get
-flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://big-sister-api.up.railway.app
+flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
 ```
 
 بعد دیگر لازم نیست آدرس را دستی وارد کنی؛ فقط نقش و رمز هر نفر متفاوت است.
