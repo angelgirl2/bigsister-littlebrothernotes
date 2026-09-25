@@ -7,11 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 
 import '../cloud/chat_models.dart';
 import '../cloud/cloud_service.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
+import '../utils/persian_date.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.theme});
@@ -38,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool loading = true;
   bool sending = false;
   bool recording = false;
+  ChatMessage? replyingTo;
   bool playing = false;
   bool otherOnline = false;
   bool otherTyping = false;
@@ -125,13 +128,35 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onIncomingMessage(ChatMessage message) {
-    if (messages.any((m) => m.id == message.id)) return;
     if (!mounted) return;
-    setState(() => messages.add(message));
+    final index = messages.indexWhere((m) => m.id == message.id);
+    if (index >= 0) {
+      setState(() => messages[index] = message);
+    } else {
+      setState(() => messages.add(message));
+    }
     if (message.senderId != myDeviceId) {
       cloud.markRead(message.id);
     }
     _scrollToBottom();
+  }
+
+  void _replaceMessage(ChatMessage message) {
+    if (!mounted) return;
+    final index = messages.indexWhere((m) => m.id == message.id);
+    setState(() {
+      if (index >= 0) {
+        messages[index] = message;
+      } else {
+        messages.add(message);
+      }
+    });
+  }
+
+  String _newLocalUuid() {
+    final now = DateTime.now().microsecondsSinceEpoch.toString();
+    final pad = '${now}00000000000000000000000000000000';
+    return '${pad.substring(0, 8)}-${pad.substring(8, 12)}-4${pad.substring(13, 16)}-a${pad.substring(17, 20)}-${pad.substring(20, 32)}';
   }
 
   void _scrollToBottom({bool animated = true}) {
@@ -222,29 +247,39 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> sendText() async {
     final text = composer.text.trim();
-    if (text.isEmpty || sending || !cloud.configured) return;
-    setState(() => sending = true);
-    composer.clear();
-    if (mounted) setState(() {});
+    if (text.isEmpty || !cloud.configured) return;
+    final id = _newLocalUuid();
+    final replyId = replyingTo?.id;
+    final optimistic = ChatMessage(
+      id: id,
+      senderId: myDeviceId ?? 'self',
+      type: 'text',
+      body: text,
+      createdAt: DateTime.now(),
+      replyTo: replyId,
+    );
+    setState(() {
+      messages.add(optimistic);
+      composer.clear();
+      replyingTo = null;
+    });
     cloud.setTyping(false);
+    _scrollToBottom();
     try {
-      final msg = await cloud.sendText(text);
-      if (mounted && !messages.any((m) => m.id == msg.id)) {
-        setState(() => messages.add(msg));
-        _scrollToBottom();
-      }
+      final msg = await cloud.sendText(text, replyTo: replyId, id: id);
+      _replaceMessage(msg);
+      _scrollToBottom();
     } catch (_) {
-      if (mounted) {
+      if (!mounted) return;
+      setState(() {
+        messages.removeWhere((m) => m.id == id);
         composer.text = text;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')));
-      }
-    } finally {
-      if (mounted) setState(() => sending = false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')));
     }
   }
 
   Future<void> sendAnyFile() async {
-    if (sending) return;
     final picked = await FilePicker.platform.pickFiles(type: FileType.any);
     final path = picked?.files.single.path;
     if (path == null) return;
@@ -252,14 +287,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> sendImage() async {
-    if (sending) return;
     final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 88);
     if (x == null) return;
     await _sendFile(x.path, 'image');
   }
 
+  Future<void> sendVideo() async {
+    final x = await picker.pickVideo(source: ImageSource.gallery);
+    if (x == null) return;
+    await _sendFile(x.path, 'video');
+  }
+
   Future<void> toggleRecord() async {
-    if (sending) return;
     if (recording) {
       final path = await recorder.stop();
       if (mounted) setState(() => recording = false);
@@ -278,21 +317,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendFile(String path, String kind) async {
     if (!cloud.configured) return;
-    setState(() => sending = true);
+    final id = _newLocalUuid();
+    final replyId = replyingTo?.id;
+    final optimistic = ChatMessage(
+      id: id,
+      senderId: myDeviceId ?? 'self',
+      type: kind,
+      body: '',
+      createdAt: DateTime.now(),
+      replyTo: replyId,
+    );
+    setState(() {
+      messages.add(optimistic);
+      replyingTo = null;
+    });
+    _scrollToBottom();
     try {
-      final msg = await cloud.sendAttachment(path: path, kind: kind);
-      if (mounted && !messages.any((m) => m.id == msg.id)) {
-        setState(() => messages.add(msg));
-        _scrollToBottom();
-      }
+      final msg = await cloud.sendAttachment(path: path, kind: kind, replyTo: replyId, id: id);
+      _replaceMessage(msg);
+      _scrollToBottom();
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم فایل و اتصال دفتر مشترک را بررسی کن.')));
+      if (mounted) {
+        setState(() => messages.removeWhere((m) => m.id == id));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم فایل و اتصال دفتر مشترک را بررسی کن.')));
+      }
     } finally {
       try {
         final f = File(path);
         if (await f.exists()) await f.delete();
       } catch (_) {}
-      if (mounted) setState(() => sending = false);
     }
   }
 
@@ -434,8 +487,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
+  bool _sameDay(DateTime a, DateTime b) {
+    final aa = a.toLocal();
+    final bb = b.toLocal();
+    return aa.year == bb.year && aa.month == bb.month && aa.day == bb.day;
+  }
 
   Widget _daySeparator(DateTime date, Color accent) {
     final now = DateTime.now();
@@ -443,7 +499,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ? 'امروز'
         : _sameDay(date, now.subtract(const Duration(days: 1)))
             ? 'دیروز'
-            : '${date.year}/${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}';
+            : PersianDate.date(date);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Container(
@@ -466,7 +522,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Align(
       alignment: mine ? Alignment.centerLeft : Alignment.centerRight,
       child: GestureDetector(
-        onLongPress: () => _toggleSelection(message),
+        onLongPress: () => _showMessageActions(message),
         onTap: selecting ? () => _toggleSelection(message) : null,
         onDoubleTap: selecting
             ? null
@@ -517,6 +573,28 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
+              if (message.type == 'video' && message.attachmentId != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _RemoteVideoBubble(
+                    key: ValueKey('video-${message.id}'),
+                    url: cloud.mediaUrl(message.attachmentId!),
+                    headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
+                  ),
+                ),
+              if ((message.type == 'image' || message.type == 'video' || message.type == 'audio' || message.type == 'file') && !message.hasAttachment)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(message.type == 'video' ? 'در حال ارسال ویدیو…' : message.type == 'image' ? 'در حال ارسال عکس…' : message.type == 'audio' ? 'در حال ارسال صدا…' : 'در حال ارسال فایل…'),
+                  ],
+                ),
               if (message.type == 'file' && message.attachmentId != null)
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -548,6 +626,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     const Text('پیام صوتی'),
                   ],
                 ),
+              if (message.replyTo != null)
+                _replyPreviewForMessage(message.replyTo!, c),
               if (message.body.isNotEmpty) ...[
                 if (message.type != 'text') const SizedBox(height: 5),
                 Text(
@@ -589,6 +669,107 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  ChatMessage? _messageById(String id) {
+    for (final message in messages) {
+      if (message.id == id) return message;
+    }
+    return null;
+  }
+
+  Widget _replyPreviewForMessage(String id, ThemeColors c) {
+    final target = _messageById(id);
+    final text = target == null
+        ? 'پیام حذف شده'
+        : target.body.trim().isEmpty
+            ? (target.type == 'audio' ? 'پیام صوتی' : target.type == 'video' ? 'ویدیو' : target.type == 'image' ? 'عکس' : 'فایل')
+            : target.body.trim();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: c.primary.withValues(alpha: .07),
+        border: Border(right: BorderSide(color: c.primary, width: 3)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        text.length > 100 ? '${text.substring(0, 100)}…' : text,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: c.primary, fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _replyComposerBar(ThemeColors c) {
+    final target = replyingTo;
+    if (target == null) return const SizedBox.shrink();
+    final text = target.body.trim().isEmpty
+        ? (target.type == 'audio' ? 'پیام صوتی' : target.type == 'video' ? 'ویدیو' : target.type == 'image' ? 'عکس' : 'فایل')
+        : target.body.trim();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: c.primary.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: c.primary.withValues(alpha: .2)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.reply_rounded, color: c.primary, size: 20),
+          const SizedBox(width: 7),
+          Expanded(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          IconButton(
+            tooltip: 'لغو پاسخ',
+            onPressed: () => setState(() => replyingTo = null),
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.close_rounded, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showMessageActions(ChatMessage message) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.reply_rounded),
+              title: const Text('پاسخ به پیام'),
+              onTap: () => Navigator.pop(sheetContext, 'reply'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_rounded),
+              title: const Text('انتخاب پیام'),
+              onTap: () => Navigator.pop(sheetContext, 'select'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_rounded),
+              title: const Text('واکنش ❤️'),
+              onTap: () => Navigator.pop(sheetContext, 'react'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'reply') {
+      setState(() => replyingTo = message);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        FocusScope.of(context).unfocus();
+      });
+    } else if (choice == 'select') {
+      _toggleSelection(message);
+    } else if (choice == 'react') {
+      await cloud.react(message.id, message.reaction == '❤️' ? '' : '❤️');
+    }
+  }
+
   Future<void> saveRemoteFile(ChatMessage message) async {
     if (message.attachmentId == null) return;
     try {
@@ -619,52 +800,58 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  String _time(DateTime time) => '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  String _time(DateTime time) => PersianDate.time(time);
 
   Widget _composer(ThemeColors c) {
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              tooltip: 'پیوست',
-              onPressed: sending ? null : _showAttachmentSheet,
-              icon: Icon(Icons.attach_file_rounded, color: c.secondary, size: 27),
-            ),
-            Expanded(
-              child: TextField(
-                controller: composer,
-                onChanged: _onTextChanged,
-                minLines: 1,
-                maxLines: 5,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
-                  hintText: 'برای نفر مقابلت بنویس…',
-                  filled: true,
+            if (replyingTo != null) _replyComposerBar(c),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: 'پیوست',
+                  onPressed: _showAttachmentSheet,
+                  icon: Icon(Icons.attach_file_rounded, color: c.secondary, size: 27),
                 ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            IconButton(
-              tooltip: recording ? 'پایان ضبط' : 'پیام صوتی',
-              onPressed: sending ? null : toggleRecord,
-              icon: Icon(
-                recording ? Icons.stop_circle_rounded : Icons.mic_rounded,
-                color: recording ? Colors.redAccent : c.primary,
-                size: 30,
-              ),
-            ),
-            IconButton(
-              tooltip: 'فرستادن پیام',
-              onPressed: sending || composer.text.trim().isEmpty ? null : sendText,
-              icon: Icon(
-                Icons.send_rounded,
-                color: composer.text.trim().isEmpty ? Colors.white24 : c.primary,
-                size: 30,
-              ),
+                Expanded(
+                  child: TextField(
+                    controller: composer,
+                    onChanged: _onTextChanged,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.newline,
+                    decoration: const InputDecoration(
+                      hintText: 'برای نفر مقابلت بنویس…',
+                      filled: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: recording ? 'پایان ضبط' : 'پیام صوتی',
+                  onPressed: toggleRecord,
+                  icon: Icon(
+                    recording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                    color: recording ? Colors.redAccent : c.primary,
+                    size: 30,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'فرستادن پیام',
+                  onPressed: sendText,
+                  icon: Icon(
+                    Icons.send_rounded,
+                    color: c.primary,
+                    size: 30,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -683,8 +870,13 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_rounded),
-              title: const Text('انتخاب از گالری'),
+              title: const Text('انتخاب عکس از گالری'),
               onTap: () => Navigator.pop(sheetContext, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.video_library_rounded),
+              title: const Text('انتخاب ویدیو از گالری'),
+              onTap: () => Navigator.pop(sheetContext, 'video'),
             ),
             ListTile(
               leading: const Icon(Icons.folder_rounded),
@@ -699,8 +891,100 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (choice == 'gallery') {
       await sendImage();
+    } else if (choice == 'video') {
+      await sendVideo();
     } else if (choice == 'file') {
       await sendAnyFile();
     }
+  }
+}
+
+
+class _RemoteVideoBubble extends StatefulWidget {
+  const _RemoteVideoBubble({super.key, required this.url, required this.headers});
+  final String url;
+  final Map<String, String> headers;
+
+  @override
+  State<_RemoteVideoBubble> createState() => _RemoteVideoBubbleState();
+}
+
+class _RemoteVideoBubbleState extends State<_RemoteVideoBubble> {
+  late final VideoPlayerController controller;
+  bool ready = false;
+  bool failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      httpHeaders: widget.headers,
+    );
+    controller.initialize().then((_) {
+      if (mounted) setState(() => ready = true);
+    }).catchError((_) {
+      if (mounted) setState(() => failed = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (failed) {
+      return Container(
+        height: 180,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .2),
+          borderRadius: BorderRadius.circular(15),
+        ),
+        child: const Icon(Icons.broken_image_rounded, size: 40),
+      );
+    }
+    if (!ready) {
+      return Container(
+        height: 180,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .2),
+          borderRadius: BorderRadius.circular(15),
+        ),
+        child: const CircularProgressIndicator(),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(15),
+      child: GestureDetector(
+        onTap: () {
+          if (controller.value.isPlaying) {
+            controller.pause();
+          } else {
+            controller.play();
+          }
+          setState(() {});
+        },
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AspectRatio(
+              aspectRatio: controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
+              child: VideoPlayer(controller),
+            ),
+            if (!controller.value.isPlaying)
+              Container(
+                decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.black54),
+                padding: const EdgeInsets.all(12),
+                child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 38),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }

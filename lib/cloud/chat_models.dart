@@ -30,7 +30,11 @@ class ChatMessage {
   bool get isDelivered => deliveredAt != null || isRead;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    DateTime? parse(Object? value) => value == null ? null : DateTime.tryParse(value.toString());
+    DateTime? parse(Object? value) {
+      if (value == null) return null;
+      final parsed = DateTime.tryParse(value.toString());
+      return parsed?.toLocal();
+    }
     return ChatMessage(
       id: json['id']?.toString() ?? '',
       senderId: json['sender_id']?.toString() ?? json['senderId']?.toString() ?? '',
@@ -58,7 +62,7 @@ class CloudMember {
         id: json['id']?.toString() ?? '',
         role: json['role']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
-        lastSeenAt: json['last_seen_at'] == null ? null : DateTime.tryParse(json['last_seen_at'].toString()),
+        lastSeenAt: json['last_seen_at'] == null ? null : DateTime.tryParse(json['last_seen_at'].toString())?.toLocal(),
       );
 }
 
@@ -83,7 +87,11 @@ class CloudLetter {
   bool get isRead => readAt != null;
 
   factory CloudLetter.fromJson(Map<String, dynamic> json) {
-    DateTime? parse(Object? value) => value == null ? null : DateTime.tryParse(value.toString());
+    DateTime? parse(Object? value) {
+      if (value == null) return null;
+      final parsed = DateTime.tryParse(value.toString());
+      return parsed?.toLocal();
+    }
     return CloudLetter(
       id: json['id']?.toString() ?? '',
       senderId: json['sender_id']?.toString() ?? json['senderId']?.toString() ?? '',

@@ -120,6 +120,7 @@ Future<void> main() async {
   final storage = await StorageService.create();
   await storage.purgeOldTrash();
   await NotificationService.instance.initialize();
+  await NotificationService.instance.requestPermission();
   await CloudService.instance.init();
   await initializeDateFormatting('fa');
   runApp(BigSisterApp(storage: storage));

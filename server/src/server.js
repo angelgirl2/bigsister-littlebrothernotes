@@ -38,7 +38,12 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: process.env.CORS_ORIGIN || '*', methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
   maxHttpBufferSize: 30 * 1024 * 1024,
+  pingInterval: 5000,
+  pingTimeout: 8000,
 });
+
+const activeSocketsByDevice = new Map();
+const onlineDevicesByRoom = new Map();
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
@@ -408,7 +413,7 @@ async function saveMediaRecord({ roomId, uploaderId, kind, file, contentHash }) 
 app.post('/api/media', auth, upload.single('file'), async (req, res) => {
   await touchDevice(req.user.deviceId);
   if (!req.file) return res.status(400).json({ error: 'file_required' });
-  const kind = ['image', 'audio', 'file'].includes(req.body?.kind) ? req.body.kind : 'file';
+  const kind = ['image', 'video', 'audio', 'file'].includes(req.body?.kind) ? req.body.kind : 'file';
   try {
     const contentHash = await sha256File(req.file.path);
     const saved = await saveMediaRecord({
@@ -428,7 +433,7 @@ app.post('/api/media', auth, upload.single('file'), async (req, res) => {
 app.post('/api/sync/media', auth, upload.single('file'), async (req, res) => {
   await touchDevice(req.user.deviceId);
   if (!req.file) return res.status(400).json({ error: 'file_required' });
-  const kind = ['image', 'audio'].includes(req.body?.kind) ? req.body.kind : 'file';
+  const kind = ['image', 'video', 'audio'].includes(req.body?.kind) ? req.body.kind : 'file';
   try {
     const contentHash = String(req.body?.sha256 || '').trim().toLowerCase() || await sha256File(req.file.path);
     if (!/^[a-f0-9]{64}$/.test(contentHash)) {
@@ -465,34 +470,75 @@ app.get('/api/media/:id', auth, async (req, res) => {
   }
 });
 
-app.post('/api/chat/messages', auth, async (req, res) => {
-  await touchDevice(req.user.deviceId);
-  const requestedId = String(req.body?.id || '');
-  const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
+async function createChatMessage({ roomId, deviceId, body, id, type, attachmentId, attachmentName, replyTo, reaction }) {
+  const requestedId = String(id || '');
+  const messageId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
     ? requestedId
     : crypto.randomUUID();
-  const type = ['text','image','audio','file'].includes(req.body?.type) ? req.body.type : 'text';
-  const body = String(req.body?.body || '').slice(0, 20000);
-  const attachmentId = req.body?.attachmentId || null;
-  const attachmentName = req.body?.attachmentName ? String(req.body.attachmentName).slice(0, 255) : null;
-  const replyTo = req.body?.replyTo || null;
-  const reaction = req.body?.reaction || null;
-  if (attachmentId) {
+  const safeType = ['text','image','video','audio','file'].includes(type) ? type : 'text';
+  const safeBody = String(body || '').slice(0, 20000);
+  const safeAttachmentId = attachmentId || null;
+  const safeAttachmentName = attachmentName ? String(attachmentName).slice(0, 255) : null;
+  const safeReplyTo = replyTo || null;
+  const safeReaction = reaction || null;
+
+  if (safeAttachmentId) {
     const attachment = await pool.query(
       'SELECT id FROM media WHERE id = $1 AND room_id = $2',
-      [attachmentId, req.user.roomId],
+      [safeAttachmentId, roomId],
     );
-    if (!attachment.rows[0]) return res.status(400).json({ error: 'attachment_not_found' });
+    if (!attachment.rows[0]) throw new Error('attachment_not_found');
   }
+  if (safeReplyTo) {
+    const reply = await pool.query(
+      'SELECT id FROM messages WHERE id = $1 AND room_id = $2',
+      [safeReplyTo, roomId],
+    );
+    if (!reply.rows[0]) throw new Error('reply_target_not_found');
+  }
+
   const result = await pool.query(
-    `INSERT INTO messages(id, room_id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO messages(id, room_id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, delivered_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+     ON CONFLICT (id) DO NOTHING
      RETURNING id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, created_at, delivered_at, read_at`,
-    [id, req.user.roomId, req.user.deviceId, type, body, attachmentId, attachmentName, replyTo, reaction],
+    [messageId, roomId, deviceId, safeType, safeBody, safeAttachmentId, safeAttachmentName, safeReplyTo, safeReaction],
   );
-  const message = result.rows[0];
-  io.to(`room:${req.user.roomId}`).emit('chat:message', message);
-  return res.status(201).json({ message });
+  if (result.rows[0]) {
+    const message = result.rows[0];
+    io.to(`room:${roomId}`).emit('chat:message', message);
+    return message;
+  }
+  const existing = await pool.query(
+    `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, created_at, delivered_at, read_at
+     FROM messages WHERE id = $1 AND room_id = $2`,
+    [messageId, roomId],
+  );
+  return existing.rows[0] || null;
+}
+
+app.post('/api/chat/messages', auth, async (req, res) => {
+  await touchDevice(req.user.deviceId);
+  try {
+    const message = await createChatMessage({
+      roomId: req.user.roomId,
+      deviceId: req.user.deviceId,
+      id: req.body?.id,
+      type: req.body?.type,
+      body: req.body?.body,
+      attachmentId: req.body?.attachmentId,
+      attachmentName: req.body?.attachmentName,
+      replyTo: req.body?.replyTo,
+      reaction: req.body?.reaction,
+    });
+    if (!message) return res.status(500).json({ error: 'message_create_failed' });
+    return res.status(201).json({ message });
+  } catch (e) {
+    if (e?.message === 'attachment_not_found' || e?.message === 'reply_target_not_found') {
+      return res.status(400).json({ error: e.message });
+    }
+    return res.status(500).json({ error: 'message_create_failed' });
+  }
 });
 
 app.patch('/api/chat/messages/:id/read', auth, async (req, res) => {
@@ -620,11 +666,48 @@ io.use((socket, next) => {
 io.on('connection', async (socket) => {
   const { roomId, deviceId } = socket.user;
   socket.join(`room:${roomId}`);
+
+  const count = (activeSocketsByDevice.get(deviceId) || 0) + 1;
+  activeSocketsByDevice.set(deviceId, count);
+  let roomDevices = onlineDevicesByRoom.get(roomId);
+  if (!roomDevices) {
+    roomDevices = new Set();
+    onlineDevicesByRoom.set(roomId, roomDevices);
+  }
+  const wasOnlineInRoom = roomDevices.has(deviceId);
+  roomDevices.add(deviceId);
   await touchDevice(deviceId);
-  io.to(`room:${roomId}`).emit('presence', { deviceId, online: true, at: new Date().toISOString() });
+
+  socket.emit('presence:state', {
+    deviceIds: Array.from(roomDevices),
+    at: new Date().toISOString(),
+  });
+  if (!wasOnlineInRoom) {
+    io.to(`room:${roomId}`).emit('presence', { deviceId, online: true, at: new Date().toISOString() });
+  }
 
   socket.on('typing', (value) => {
     socket.to(`room:${roomId}`).emit('typing', { deviceId, typing: Boolean(value) });
+  });
+
+  socket.on('chat:send', async (payload, ack) => {
+    try {
+      await touchDevice(deviceId);
+      const message = await createChatMessage({
+        roomId,
+        deviceId,
+        id: payload?.id,
+        type: payload?.type,
+        body: payload?.body,
+        attachmentId: payload?.attachmentId,
+        attachmentName: payload?.attachmentName,
+        replyTo: payload?.replyTo,
+        reaction: payload?.reaction,
+      });
+      if (typeof ack === 'function') ack(message || null);
+    } catch (e) {
+      if (typeof ack === 'function') ack({ error: e?.message || 'message_create_failed' });
+    }
   });
 
   socket.on('message:delivered', async (messageId) => {
@@ -638,8 +721,17 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('disconnect', async () => {
+    const nextCount = Math.max(0, (activeSocketsByDevice.get(deviceId) || 1) - 1);
+    if (nextCount === 0) activeSocketsByDevice.delete(deviceId);
+    else activeSocketsByDevice.set(deviceId, nextCount);
     await touchDevice(deviceId);
-    io.to(`room:${roomId}`).emit('presence', { deviceId, online: false, at: new Date().toISOString() });
+
+    if (nextCount === 0) {
+      const roomDevices = onlineDevicesByRoom.get(roomId);
+      roomDevices?.delete(deviceId);
+      if (roomDevices && roomDevices.size === 0) onlineDevicesByRoom.delete(roomId);
+      io.to(`room:${roomId}`).emit('presence', { deviceId, online: false, at: new Date().toISOString() });
+    }
   });
 });
 

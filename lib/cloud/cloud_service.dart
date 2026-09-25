@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../services/notification_service.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 import '../services/storage_service.dart';
@@ -37,6 +39,9 @@ class CloudService {
   bool _syncing = false;
   bool _syncQueued = false;
   bool _online = false;
+  String? _cachedDeviceId;
+  final Set<String> _knownChatMessageIds = <String>{};
+  bool _hasConnectedOnce = false;
 
   Stream<void> get contentChanges => _contentChanged.stream;
   Stream<ChatMessage> get incomingMessages => _messages.stream;
@@ -69,7 +74,7 @@ class CloudService {
         baseUrl: url,
         connectTimeout: const Duration(seconds: 12),
         receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 60),
+        sendTimeout: const Duration(seconds: 180),
         headers: {'Accept': 'application/json'},
         validateStatus: (s) => s != null && s < 500,
       ));
@@ -88,6 +93,7 @@ class CloudService {
     _baseUrl = _normalizeUrl(_buildUrl);
     _role = prefs.getString(_roleKey);
     _label = prefs.getString(_labelKey);
+    _cachedDeviceId = await _secure.read(key: _deviceIdKey);
     _dio = _makeDio(normalizedBaseUrl);
     _initialized = true;
     if (configured) {
@@ -126,7 +132,8 @@ class CloudService {
     final prefs = await SharedPreferences.getInstance();
     await _secure.write(key: _tokenKey, value: data['token']?.toString());
     await _secure.write(key: _roomIdKey, value: data['roomId']?.toString());
-    await _secure.write(key: _deviceIdKey, value: data['deviceId']?.toString());
+    _cachedDeviceId = data['deviceId']?.toString();
+    await _secure.write(key: _deviceIdKey, value: _cachedDeviceId);
     _role = data['role']?.toString();
     _label = data['label']?.toString();
     if (_role != null) await prefs.setString(_roleKey, _role!);
@@ -145,6 +152,9 @@ class CloudService {
     await prefs.remove(_labelKey);
     await _secure.delete(key: _tokenKey);
     await _secure.delete(key: _roomIdKey);
+    _cachedDeviceId = null;
+    _knownChatMessageIds.clear();
+    _hasConnectedOnce = false;
     await _secure.delete(key: _deviceIdKey);
   }
 
@@ -160,12 +170,20 @@ class CloudService {
           .setAuth({'token': t})
           .disableAutoConnect()
           .enableForceNew()
+          .enableReconnection()
+          .setReconnectionAttempts(-1)
+          .setReconnectionDelay(400)
+          .setReconnectionDelayMax(3000)
           .build(),
     );
     _socket!
       ..onConnect((_) {
         _online = true;
         _connectionChanged.add(true);
+        if (_hasConnectedOnce) {
+          unawaited(_catchUpMessages());
+        }
+        _hasConnectedOnce = true;
       })
       ..onDisconnect((_) {
         _online = false;
@@ -179,7 +197,14 @@ class CloudService {
       ..on('pair:completed', (_) => _contentChanged.add(null))
       ..on('chat:message', (data) {
         try {
-          if (data is Map) _messages.add(ChatMessage.fromJson(Map<String, dynamic>.from(data)));
+          if (data is Map) {
+            final message = ChatMessage.fromJson(Map<String, dynamic>.from(data));
+            final isNew = _knownChatMessageIds.add(message.id);
+            _messages.add(message);
+            if (isNew && (_cachedDeviceId == null || message.senderId != _cachedDeviceId)) {
+              unawaited(NotificationService.instance.showIncomingChat(message));
+            }
+          }
         } catch (_) {}
       })
       ..on('letter:new', (data) {
@@ -205,6 +230,14 @@ class CloudService {
       })
       ..on('presence', (data) {
         if (data is Map) _presence.add(Map<String, dynamic>.from(data));
+      })
+      ..on('presence:state', (data) {
+        if (data is Map) {
+          final devices = (data['deviceIds'] as List? ?? const []).whereType<String>();
+          for (final id in devices) {
+            _presence.add({'deviceId': id, 'online': true, 'at': DateTime.now().toUtc().toIso8601String()});
+          }
+        }
       });
     _socket!.connect();
   }
@@ -363,11 +396,31 @@ class CloudService {
     return list.map((e) => CloudMember.fromJson(Map<String, dynamic>.from(e as Map))).toList();
   }
 
-  Future<ChatMessage> sendText(String body, {String? replyTo}) async {
-    return _sendMessage(type: 'text', body: body, replyTo: replyTo);
+  Future<ChatMessage> sendText(String body, {String? replyTo, String? id}) async {
+    final payload = <String, dynamic>{
+      'id': id ?? _uuidV4(),
+      'type': 'text',
+      'body': body,
+      'attachmentId': null,
+      'attachmentName': null,
+      'replyTo': replyTo,
+    };
+    final socket = _socket;
+    if (socket != null && _online) {
+      final result = await _emitWithAck('chat:send', payload);
+      if (result != null && result['error'] == null) {
+        return ChatMessage.fromJson(Map<String, dynamic>.from(result));
+      }
+    }
+    return _sendMessage(
+      type: 'text',
+      body: body,
+      replyTo: replyTo,
+      id: payload['id']?.toString(),
+    );
   }
 
-  Future<ChatMessage> sendAttachment({required String path, required String kind, String caption = '', String? replyTo}) async {
+  Future<ChatMessage> sendAttachment({required String path, required String kind, String caption = '', String? replyTo, String? id}) async {
     final t = await token;
     if (t == null) throw StateError('Not connected');
     final originalName = File(path).uri.pathSegments.last;
@@ -383,16 +436,17 @@ class CloudService {
       attachmentId: uploadResponse.data['id']?.toString(),
       attachmentName: uploadResponse.data['originalName']?.toString() ?? originalName,
       replyTo: replyTo,
+      id: id,
     );
   }
 
-  Future<ChatMessage> _sendMessage({required String type, required String body, String? attachmentId, String? attachmentName, String? replyTo}) async {
+  Future<ChatMessage> _sendMessage({required String type, required String body, String? attachmentId, String? attachmentName, String? replyTo, String? id}) async {
     final t = await token;
     if (t == null) throw StateError('Not connected');
     final response = await _dio!.post(
       '/api/chat/messages',
       data: {
-        'id': DateTime.now().microsecondsSinceEpoch.toString(),
+        'id': id ?? _uuidV4(),
         'type': type,
         'body': body,
         'attachmentId': attachmentId,
@@ -403,6 +457,38 @@ class CloudService {
     );
     _ensureOk(response);
     return ChatMessage.fromJson(Map<String, dynamic>.from(response.data['message'] as Map));
+  }
+
+  Future<Map<String, dynamic>?> _emitWithAck(String event, Map<String, dynamic> payload) async {
+    final socket = _socket;
+    if (socket == null || !_online) return null;
+    final completer = Completer<Map<String, dynamic>?>();
+    var completed = false;
+    void finish(Map<String, dynamic>? value) {
+      if (completed) return;
+      completed = true;
+      if (!completer.isCompleted) completer.complete(value);
+    }
+    try {
+      socket.emitWithAck(event, payload, ack: (data) {
+        if (data is Map) {
+          finish(Map<String, dynamic>.from(data));
+        } else {
+          finish(null);
+        }
+      });
+      Future<void>.delayed(const Duration(seconds: 8), () => finish(null));
+      return await completer.future;
+    } catch (_) {
+      finish(null);
+      return null;
+    }
+  }
+
+  String _uuidV4() {
+    final r = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
+    final stamp = '${r}00000000000000000000000000000000';
+    return '${stamp.substring(0, 8)}-${stamp.substring(8, 12)}-4${stamp.substring(13, 16)}-a${stamp.substring(17, 20)}-${stamp.substring(20, 32)}';
   }
 
   Future<List<ChatMessage>> fetchMessages({DateTime? before, int limit = 50}) async {
@@ -418,7 +504,23 @@ class CloudService {
     );
     _ensureOk(response);
     final list = response.data['messages'] as List? ?? const [];
-    return list.map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    final parsed = list.map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    _knownChatMessageIds.addAll(parsed.map((m) => m.id));
+    return parsed;
+  }
+
+  Future<void> _catchUpMessages() async {
+    try {
+      final knownBeforeFetch = Set<String>.of(_knownChatMessageIds);
+      final latest = await fetchMessages(limit: 100);
+      for (final message in latest) {
+        if (!knownBeforeFetch.contains(message.id)) {
+          // Reconnect catch-up repairs anything missed while offline. The normal
+          // socket event owns notifications, so old messages are not re-alerted.
+          _messages.add(message);
+        }
+      }
+    } catch (_) {}
   }
 
   Future<CloudLetter> sendLetter({required String title, required String body}) async {
