@@ -136,9 +136,9 @@ flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-l
 
 در برنامه:
 
-**تنظیمات → دفتر مشترک → آدرس Railway**
+**تنظیمات → تنظیمات سرور Railway**
 
-و URL سرویس Railway را وارد کن:
+URL سرویس Railway را وارد کن، سپس «ذخیره آدرس» را بزن. با «بررسی اتصال» می‌توانی پاسخ API را آزمایش کنی. آدرس روی هر دستگاه به‌صورت جداگانه ذخیره می‌شود؛ هر دو گوشی باید یک URL یکسان داشته باشند. اگر دامنه را عوض کردی، برای ورود به سرور جدید دوباره رمز دفتر مشترک را وارد کن:
 
 ```text
 https://bigsister-littlebrothernotes.up.railway.app
