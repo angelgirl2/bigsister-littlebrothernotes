@@ -198,16 +198,19 @@ class _MainShellState extends State<MainShell> {
     locked = widget.storage.loadPin() != null || widget.storage.loadBiometric();
     quoteIndex = 0;
     quoteIndex = widget.storage.dailyQuoteIndex(quotes.length);
-    widget.storage.setCloudChangedCallback(() => CloudService.instance.syncNow(widget.storage));
+    widget.storage.setCloudChangedCallback(
+      () => CloudService.instance.syncNow(widget.storage),
+    );
     _cloudSubscription = CloudService.instance.contentChanges.listen((_) async {
       await _applyRemoteCloud();
     });
-    _cloudConnectionSubscription = CloudService.instance.connectionChanges.listen((online) {
-      if (online) {
-        unawaited(_startupCloudSync());
-      }
-      if (mounted) setState(() {});
-    });
+    _cloudConnectionSubscription = CloudService.instance.connectionChanges
+        .listen((online) {
+          if (online) {
+            unawaited(_startupCloudSync());
+          }
+          if (mounted) setState(() {});
+        });
     if (CloudService.instance.configured) {
       Future.microtask(_startupCloudSync);
     }
@@ -224,7 +227,11 @@ class _MainShellState extends State<MainShell> {
     await CloudService.instance.pullAndApply(widget.storage);
     for (final n in widget.storage.activeNotes()) {
       if (n.reminderAt != null && n.reminderAt!.isAfter(DateTime.now())) {
-        await NotificationService.instance.scheduleNoteReminder(noteId: n.id, title: n.title, when: n.reminderAt!);
+        await NotificationService.instance.scheduleNoteReminder(
+          noteId: n.id,
+          title: n.title,
+          when: n.reminderAt!,
+        );
       } else {
         await NotificationService.instance.cancelNoteReminder(n.id);
       }
@@ -329,10 +336,7 @@ class _MainShellState extends State<MainShell> {
         onDelete: moveToTrash,
         onRefresh: (_) => refresh(),
       ),
-      LettersTab(
-        theme: widget.theme,
-        cloud: CloudService.instance,
-      ),
+      LettersTab(theme: widget.theme, cloud: CloudService.instance),
       SettingsTab(
         storage: widget.storage,
         theme: widget.theme,
@@ -651,18 +655,26 @@ class HomeTab extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                CloudService.instance.online ? Icons.sync_rounded : Icons.cloud_off_rounded,
+                                CloudService.instance.online
+                                    ? Icons.sync_rounded
+                                    : Icons.cloud_off_rounded,
                                 size: 15,
-                                color: CloudService.instance.online ? c.primary : Colors.white38,
+                                color: CloudService.instance.online
+                                    ? c.primary
+                                    : Colors.white38,
                               ),
                               const SizedBox(width: 5),
                               Text(
                                 CloudService.instance.configured
-                                    ? (CloudService.instance.online ? 'دفتر دوطرفه • آنلاین' : 'دفتر دوطرفه • آفلاین')
+                                    ? (CloudService.instance.online
+                                          ? 'دفتر دوطرفه • آنلاین'
+                                          : 'دفتر دوطرفه • آفلاین')
                                     : 'دفتر دوطرفه • راه‌اندازی نشده',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: CloudService.instance.online ? c.primary : Colors.white38,
+                                  color: CloudService.instance.online
+                                      ? c.primary
+                                      : Colors.white38,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -1882,15 +1894,24 @@ class _LettersTabState extends State<LettersTab> {
                 textDirection: ui.TextDirection.rtl,
                 minLines: 7,
                 maxLines: 12,
-                decoration: const InputDecoration(labelText: 'متن نامه', alignLabelWithHint: true),
+                decoration: const InputDecoration(
+                  labelText: 'متن نامه',
+                  alignLabelWithHint: true,
+                ),
               ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('لغو')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('لغو'),
+          ),
           FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, [titleController.text, bodyController.text]),
+            onPressed: () => Navigator.pop(dialogContext, [
+              titleController.text,
+              bodyController.text,
+            ]),
             icon: const Icon(Icons.send_rounded),
             label: const Text('ارسال مستقیم'),
           ),
@@ -1912,11 +1933,17 @@ class _LettersTabState extends State<LettersTab> {
         setState(() => letters.add(letter));
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('نامه مستقیم ارسال شد ❤️')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('نامه مستقیم ارسال شد ❤️')),
+        );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('نامه ارسال نشد؛ اتصال دفتر مشترک را بررسی کن.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('نامه ارسال نشد؛ اتصال دفتر مشترک را بررسی کن.'),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => sending = false);
@@ -1932,8 +1959,15 @@ class _LettersTabState extends State<LettersTab> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text(letter.title),
-        content: SingleChildScrollView(child: Text(letter.body, style: const TextStyle(height: 1.7))),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('بستن'))],
+        content: SingleChildScrollView(
+          child: Text(letter.body, style: const TextStyle(height: 1.7)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('بستن'),
+          ),
+        ],
       ),
     );
   }
@@ -1941,28 +1975,69 @@ class _LettersTabState extends State<LettersTab> {
   @override
   Widget build(BuildContext context) {
     final c = colorsFor(widget.theme);
-    final entries = letterTemplates.entries.where((e) => query.isEmpty || e.key.contains(query) || e.value.contains(query)).toList();
-    final filteredLetters = letters.where((e) => query.isEmpty || e.title.contains(query) || e.body.contains(query)).toList();
+    final entries = letterTemplates.entries
+        .where(
+          (e) =>
+              query.isEmpty || e.key.contains(query) || e.value.contains(query),
+        )
+        .toList();
+    final filteredLetters = letters
+        .where(
+          (e) =>
+              query.isEmpty ||
+              e.title.contains(query) ||
+              e.body.contains(query),
+        )
+        .toList();
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 145),
         children: [
-          Text('نامه‌های ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName} 💌', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+          Text(
+            'نامه‌های ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName} 💌',
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900),
+          ),
           const SizedBox(height: 8),
-          Text('نامه دیگر یادداشت محلی نیست؛ هر نامه مستقیم برای نفر مقابل ارسال و در دفتر مشترک نگهداری می‌شود.', style: TextStyle(color: Colors.white.withValues(alpha: .52), height: 1.55)),
+          Text(
+            'نامه دیگر یادداشت محلی نیست؛ هر نامه مستقیم برای نفر مقابل ارسال و در دفتر مشترک نگهداری می‌شود.',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .52),
+              height: 1.55,
+            ),
+          ),
           const SizedBox(height: 14),
           FilledButton.icon(
-            onPressed: widget.cloud.configured && !sending ? () => _compose() : null,
+            onPressed: widget.cloud.configured && !sending
+                ? () => _compose()
+                : null,
             icon: const Icon(Icons.edit_rounded),
-            label: Text(widget.cloud.configured ? 'نوشتن نامه جدید' : 'ابتدا دفتر مشترک را متصل کن'),
+            label: Text(
+              widget.cloud.configured
+                  ? 'نوشتن نامه جدید'
+                  : 'ابتدا دفتر مشترک را متصل کن',
+            ),
           ),
           const SizedBox(height: 12),
-          TextField(onChanged: (v) => setState(() => query = v), decoration: const InputDecoration(prefixIcon: Icon(Icons.search_rounded), hintText: 'جست‌وجوی نامه...')),
+          TextField(
+            onChanged: (v) => setState(() => query = v),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search_rounded),
+              hintText: 'جست‌وجوی نامه...',
+            ),
+          ),
           const SizedBox(height: 20),
           if (loading)
-            const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              ),
+            )
           else if (filteredLetters.isNotEmpty) ...[
-            const Text('نامه‌های شما', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+            const Text(
+              'نامه‌های شما',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+            ),
             const SizedBox(height: 10),
             ...filteredLetters.reversed.map((letter) {
               final mine = letter.senderId == myDeviceId;
@@ -1973,30 +2048,52 @@ class _LettersTabState extends State<LettersTab> {
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
                     onTap: () => _openLetter(letter),
-                    leading: Icon(mine ? Icons.outbox_rounded : Icons.mark_email_unread_rounded, color: c.primary),
-                    title: Text(letter.title, style: const TextStyle(fontWeight: FontWeight.w900)),
+                    leading: Icon(
+                      mine
+                          ? Icons.outbox_rounded
+                          : Icons.mark_email_unread_rounded,
+                      color: c.primary,
+                    ),
+                    title: Text(
+                      letter.title,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
                     subtitle: Text(
                       '${mine ? 'ارسال‌شده' : 'دریافتی'} • ${DateFormat('yyyy/MM/dd  HH:mm').format(letter.createdAt.toLocal())}\n${letter.body}',
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white.withValues(alpha: .62), height: 1.45),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .62),
+                        height: 1.45,
+                      ),
                     ),
-                    trailing: Icon(letter.isRead ? Icons.done_all_rounded : Icons.mark_email_unread_rounded, color: letter.isRead ? c.primary : Colors.white38),
+                    trailing: Icon(
+                      letter.isRead
+                          ? Icons.done_all_rounded
+                          : Icons.mark_email_unread_rounded,
+                      color: letter.isRead ? c.primary : Colors.white38,
+                    ),
                   ),
                 ),
               );
             }),
             const SizedBox(height: 18),
           ],
-          const Text('نمونه نامه‌ها', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+          const Text(
+            'نمونه نامه‌ها',
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+          ),
           const SizedBox(height: 10),
-          ...entries.asMap().entries.map((entry) => _EnvelopeCard(
-                index: entry.key,
-                title: entry.value.key,
-                text: entry.value.value,
-                color: c.primary,
-                onSend: () => _compose(title: entry.value.key, body: entry.value.value),
-              )),
+          ...entries.asMap().entries.map(
+            (entry) => _EnvelopeCard(
+              index: entry.key,
+              title: entry.value.key,
+              text: entry.value.value,
+              color: c.primary,
+              onSend: () =>
+                  _compose(title: entry.value.key, body: entry.value.value),
+            ),
+          ),
         ],
       ),
     );
@@ -2004,7 +2101,13 @@ class _LettersTabState extends State<LettersTab> {
 }
 
 class _EnvelopeCard extends StatefulWidget {
-  const _EnvelopeCard({required this.index, required this.title, required this.text, required this.color, required this.onSend});
+  const _EnvelopeCard({
+    required this.index,
+    required this.title,
+    required this.text,
+    required this.color,
+    required this.onSend,
+  });
   final int index;
   final String title;
   final String text;
@@ -2015,12 +2118,27 @@ class _EnvelopeCard extends StatefulWidget {
   State<_EnvelopeCard> createState() => _EnvelopeCardState();
 }
 
-class _EnvelopeCardState extends State<_EnvelopeCard> with SingleTickerProviderStateMixin {
+class _EnvelopeCardState extends State<_EnvelopeCard>
+    with SingleTickerProviderStateMixin {
   bool open = false;
-  late final AnimationController c = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+  late final AnimationController c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
   @override
-  void dispose() { c.dispose(); super.dispose(); }
-  void toggle() { setState(() => open = !open); if (open) { c.forward(); } else { c.reverse(); } }
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  void toggle() {
+    setState(() => open = !open);
+    if (open) {
+      c.forward();
+    } else {
+      c.reverse();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2029,25 +2147,69 @@ class _EnvelopeCardState extends State<_EnvelopeCard> with SingleTickerProviderS
       child: GestureDetector(
         onTap: toggle,
         child: TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: 1), duration: Duration(milliseconds: 300 + widget.index * 20), curve: Curves.easeOutCubic,
-          builder: (_, v, child) => Transform.translate(offset: Offset(0, (1 - v) * 10), child: Opacity(opacity: v, child: child)),
+          tween: Tween(begin: 0, end: 1),
+          duration: Duration(milliseconds: 300 + widget.index * 20),
+          curve: Curves.easeOutCubic,
+          builder: (_, v, child) => Transform.translate(
+            offset: Offset(0, (1 - v) * 10),
+            child: Opacity(opacity: v, child: child),
+          ),
           child: _Glass(
             accent: widget.color,
             child: AnimatedSize(
-              duration: const Duration(milliseconds: 420), curve: Curves.easeOutCubic,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
               child: Column(
                 children: [
-                  Row(children: [
-                    Container(width: 48, height: 48, decoration: BoxDecoration(color: widget.color.withValues(alpha: .10), shape: BoxShape.circle), child: Icon(open ? Icons.markunread_rounded : Icons.mail_rounded, color: widget.color)),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16))),
-                    Icon(open ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded),
-                  ]),
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: widget.color.withValues(alpha: .10),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          open ? Icons.markunread_rounded : Icons.mail_rounded,
+                          color: widget.color,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          widget.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        open
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                      ),
+                    ],
+                  ),
                   if (open) ...[
                     const SizedBox(height: 12),
-                    Text(widget.text, style: const TextStyle(height: 1.6, color: Colors.white70)),
+                    Text(
+                      widget.text,
+                      style: const TextStyle(
+                        height: 1.6,
+                        color: Colors.white70,
+                      ),
+                    ),
                     const SizedBox(height: 12),
-                    Align(alignment: Alignment.centerLeft, child: FilledButton.icon(onPressed: widget.onSend, icon: const Icon(Icons.send_rounded), label: const Text('ویرایش و ارسال'))),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        onPressed: widget.onSend,
+                        icon: const Icon(Icons.send_rounded),
+                        label: const Text('ویرایش و ارسال'),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -2107,13 +2269,19 @@ class _SettingsTabState extends State<SettingsTab> {
       await widget.cloud.sendText('$emoji $label ❤️');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('حال تو برای ${widget.cloud.otherDisplayName} فرستاده شد ❤️')),
+          SnackBar(
+            content: Text(
+              'حال تو برای ${widget.cloud.otherDisplayName} فرستاده شد ❤️',
+            ),
+          ),
         );
       }
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ارسال حال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')),
+          const SnackBar(
+            content: Text('ارسال حال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.'),
+          ),
         );
       }
     } finally {
@@ -2127,7 +2295,9 @@ class _SettingsTabState extends State<SettingsTab> {
     lock = widget.storage.loadPin() != null;
     bio = widget.storage.loadBiometric();
     railwayUrl = TextEditingController(
-      text: widget.cloud.baseUrl ?? 'https://bigsister-littlebrothernotes.up.railway.app',
+      text:
+          widget.cloud.baseUrl ??
+          'https://bigsister-littlebrothernotes.up.railway.app',
     );
   }
 
@@ -2202,7 +2372,8 @@ class _SettingsTabState extends State<SettingsTab> {
     } catch (_) {
       if (mounted) {
         setState(() {
-          railwayMessage = 'اتصال برقرار نشد. دامنه، اینترنت و وضعیت سرویس Railway/PostgreSQL را بررسی کن.';
+          railwayMessage =
+              'اتصال برقرار نشد. دامنه، اینترنت و وضعیت سرویس Railway/PostgreSQL را بررسی کن.';
           railwayConnectionOk = false;
         });
       }
@@ -2281,7 +2452,8 @@ class _SettingsTabState extends State<SettingsTab> {
         return;
       }
       final ok = await auth.authenticate(
-        localizedReason: 'برای فعال کردن قفل آبجی بزرگ و داداش کوچیکه احراز هویت کن',
+        localizedReason:
+            'برای فعال کردن قفل آبجی بزرگ و داداش کوچیکه احراز هویت کن',
         biometricOnly: true,
         sensitiveTransaction: true,
         persistAcrossBackgrounding: true,
@@ -2458,18 +2630,28 @@ class _SettingsTabState extends State<SettingsTab> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(Icons.sync_rounded, color: c.primary),
-                    title: Text('دفتر مشترک ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName}'),
+                    title: Text(
+                      'دفتر مشترک ${widget.cloud.myDisplayName} ↔ ${widget.cloud.otherDisplayName}',
+                    ),
                     subtitle: Text(
                       widget.cloud.configured
-                          ? (widget.cloud.online ? 'همگام‌سازی زنده فعال است' : 'دفتر متصل است؛ اتصال لحظه‌ای برقرار نیست')
+                          ? (widget.cloud.online
+                                ? 'همگام‌سازی زنده فعال است'
+                                : 'دفتر متصل است؛ اتصال لحظه‌ای برقرار نیست')
                           : 'یک ورود اولیه؛ بعد از آن نمایش و همگام‌سازی خودکار',
                     ),
-                    trailing: Icon(Icons.chevron_left_rounded, color: c.primary),
+                    trailing: Icon(
+                      Icons.chevron_left_rounded,
+                      color: c.primary,
+                    ),
                     onTap: () async {
                       await Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => CloudSharedLoginScreen(storage: widget.storage, theme: widget.theme),
+                          builder: (_) => CloudSharedLoginScreen(
+                            storage: widget.storage,
+                            theme: widget.theme,
+                          ),
                         ),
                       );
                       if (mounted) setState(() {});
@@ -2493,7 +2675,10 @@ class _SettingsTabState extends State<SettingsTab> {
                         const Expanded(
                           child: Text(
                             'تنظیمات سرور Railway',
-                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
                         ),
                       ],
@@ -2507,7 +2692,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     TextField(
                       controller: railwayUrl,
                       keyboardType: TextInputType.url,
-                      textDirection: TextDirection.ltr,
+                      textDirection: ui.TextDirection.ltr,
                       autocorrect: false,
                       enableSuggestions: false,
                       decoration: const InputDecoration(
@@ -2530,16 +2715,32 @@ class _SettingsTabState extends State<SettingsTab> {
                       runSpacing: 9,
                       children: [
                         FilledButton.icon(
-                          onPressed: (railwaySaving || railwayChecking) ? null : _saveRailwayUrl,
+                          onPressed: (railwaySaving || railwayChecking)
+                              ? null
+                              : _saveRailwayUrl,
                           icon: railwaySaving
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(Icons.save_rounded),
                           label: const Text('ذخیره آدرس'),
                         ),
                         OutlinedButton.icon(
-                          onPressed: (railwaySaving || railwayChecking) ? null : _testRailwayUrl,
+                          onPressed: (railwaySaving || railwayChecking)
+                              ? null
+                              : _testRailwayUrl,
                           icon: railwayChecking
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : const Icon(Icons.wifi_tethering_rounded),
                           label: const Text('بررسی اتصال'),
                         ),
@@ -2551,15 +2752,22 @@ class _SettingsTabState extends State<SettingsTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Icon(
-                            railwayConnectionOk == true ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-                            color: railwayConnectionOk == true ? c.primary : Colors.orangeAccent,
+                            railwayConnectionOk == true
+                                ? Icons.check_circle_rounded
+                                : Icons.error_outline_rounded,
+                            color: railwayConnectionOk == true
+                                ? c.primary
+                                : Colors.orangeAccent,
                             size: 19,
                           ),
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(
                               railwayMessage!,
-                              style: const TextStyle(color: Colors.white70, height: 1.45),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                height: 1.45,
+                              ),
                             ),
                           ),
                         ],
@@ -2581,7 +2789,10 @@ class _SettingsTabState extends State<SettingsTab> {
                       const Expanded(
                         child: Text(
                           'حالت من 💗',
-                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                       if (moodSending)
@@ -2892,7 +3103,6 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 }
 
-
 class _MoodButton extends StatelessWidget {
   const _MoodButton({
     required this.emoji,
@@ -2929,7 +3139,10 @@ class _MoodButton extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
                 ),
               ),
               Icon(Icons.favorite_rounded, color: color, size: 23),
@@ -3494,7 +3707,10 @@ class _ExportScreenState extends State<ExportScreen> {
         .join('\n');
     await f.writeAsString(b);
     await SharePlus.instance.share(
-      ShareParams(files: [XFile(f.path)], subject: 'Big Sister & Little Brother'),
+      ShareParams(
+        files: [XFile(f.path)],
+        subject: 'Big Sister & Little Brother',
+      ),
     );
   }
 
@@ -4369,7 +4585,9 @@ class NoteReader extends StatelessWidget {
 
   Future<void> _share() async {
     final buffer = StringBuffer();
-    buffer.writeln(note.title.isEmpty ? 'آبجی بزرگ و داداش کوچیکه ❤️' : note.title);
+    buffer.writeln(
+      note.title.isEmpty ? 'آبجی بزرگ و داداش کوچیکه ❤️' : note.title,
+    );
     buffer.writeln();
     buffer.writeln(note.body);
     if (note.tags.isNotEmpty)
@@ -4546,7 +4764,8 @@ class _LockScreenState extends State<LockScreen> {
     setState(() => bioBusy = true);
     try {
       final ok = await LocalAuthentication().authenticate(
-        localizedReason: 'برای ورود به دفتر آبجی بزرگ و داداش کوچیکه احراز هویت کن',
+        localizedReason:
+            'برای ورود به دفتر آبجی بزرگ و داداش کوچیکه احراز هویت کن',
         biometricOnly: true,
       );
       if (ok) widget.onUnlock();
