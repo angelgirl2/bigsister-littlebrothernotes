@@ -298,11 +298,29 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendFile(x.path, 'video');
   }
 
+  Future<void> recordVideoNote() async {
+    if (!cloud.configured || sending) return;
+    try {
+      final x = await picker.pickVideo(
+        source: ImageSource.camera,
+        maxDuration: const Duration(seconds: 60),
+        preferredCameraDevice: CameraDevice.front,
+      );
+      if (x == null) return;
+      await _sendFile(x.path, 'video_note', deleteLocalAfterSend: true);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ضبط ویدیوپیام ممکن نشد. مجوز دوربین و فضای خالی گوشی را بررسی کن.')),
+      );
+    }
+  }
+
   Future<void> toggleRecord() async {
     if (recording) {
       final path = await recorder.stop();
       if (mounted) setState(() => recording = false);
-      if (path != null) await _sendFile(path, 'audio');
+      if (path != null) await _sendFile(path, 'audio', deleteLocalAfterSend: true);
       return;
     }
     if (!await recorder.hasPermission()) {
@@ -315,7 +333,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => recording = true);
   }
 
-  Future<void> _sendFile(String path, String kind) async {
+  Future<void> _sendFile(String path, String kind, {bool deleteLocalAfterSend = false}) async {
     if (!cloud.configured) return;
     final id = _newLocalUuid();
     final replyId = replyingTo?.id;
@@ -342,10 +360,14 @@ class _ChatScreenState extends State<ChatScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم فایل و اتصال دفتر مشترک را بررسی کن.')));
       }
     } finally {
-      try {
-        final f = File(path);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
+      // Only delete files created by this screen (for example recorded audio).
+      // Gallery and file-picker sources belong to the user and must be preserved.
+      if (deleteLocalAfterSend) {
+        try {
+          final f = File(path);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
     }
   }
 
@@ -573,16 +595,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-              if (message.type == 'video' && message.attachmentId != null)
+              if ((message.type == 'video' || message.type == 'video_note') && message.attachmentId != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: _RemoteVideoBubble(
                     key: ValueKey('video-${message.id}'),
                     url: cloud.mediaUrl(message.attachmentId!),
                     headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
+                    circular: message.type == 'video_note',
                   ),
                 ),
-              if ((message.type == 'image' || message.type == 'video' || message.type == 'audio' || message.type == 'file') && !message.hasAttachment)
+              if ((message.type == 'image' || message.type == 'video' || message.type == 'video_note' || message.type == 'audio' || message.type == 'file') && !message.hasAttachment)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -592,7 +615,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 8),
-                    Text(message.type == 'video' ? 'در حال ارسال ویدیو…' : message.type == 'image' ? 'در حال ارسال عکس…' : message.type == 'audio' ? 'در حال ارسال صدا…' : 'در حال ارسال فایل…'),
+                    Text(message.type == 'video_note' ? 'در حال ارسال ویدیوپیام…' : message.type == 'video' ? 'در حال ارسال ویدیو…' : message.type == 'image' ? 'در حال ارسال عکس…' : message.type == 'audio' ? 'در حال ارسال صدا…' : 'در حال ارسال فایل…'),
                   ],
                 ),
               if (message.type == 'file' && message.attachmentId != null)
@@ -843,6 +866,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'ویدیوپیام دایره‌ای',
+                  onPressed: recordVideoNote,
+                  icon: const Icon(Icons.video_camera_front_rounded, color: Colors.pinkAccent, size: 27),
+                ),
+                IconButton(
                   tooltip: 'فرستادن پیام',
                   onPressed: sendText,
                   icon: Icon(
@@ -874,6 +902,12 @@ class _ChatScreenState extends State<ChatScreen> {
               onTap: () => Navigator.pop(sheetContext, 'gallery'),
             ),
             ListTile(
+              leading: const Icon(Icons.video_camera_front_rounded, color: Colors.pinkAccent),
+              title: const Text('ضبط ویدیوپیام دایره‌ای'),
+              subtitle: const Text('با دوربین گوشی، حداکثر ۶۰ ثانیه'),
+              onTap: () => Navigator.pop(sheetContext, 'video_note'),
+            ),
+            ListTile(
               leading: const Icon(Icons.video_library_rounded),
               title: const Text('انتخاب ویدیو از گالری'),
               onTap: () => Navigator.pop(sheetContext, 'video'),
@@ -893,6 +927,8 @@ class _ChatScreenState extends State<ChatScreen> {
       await sendImage();
     } else if (choice == 'video') {
       await sendVideo();
+    } else if (choice == 'video_note') {
+      await recordVideoNote();
     } else if (choice == 'file') {
       await sendAnyFile();
     }
@@ -901,9 +937,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
 
 class _RemoteVideoBubble extends StatefulWidget {
-  const _RemoteVideoBubble({super.key, required this.url, required this.headers});
+  const _RemoteVideoBubble({super.key, required this.url, required this.headers, this.circular = false});
   final String url;
   final Map<String, String> headers;
+  final bool circular;
 
   @override
   State<_RemoteVideoBubble> createState() => _RemoteVideoBubbleState();
@@ -922,6 +959,7 @@ class _RemoteVideoBubbleState extends State<_RemoteVideoBubble> {
       httpHeaders: widget.headers,
     );
     controller.initialize().then((_) {
+      if (widget.circular) unawaited(controller.setLooping(true));
       if (mounted) setState(() => ready = true);
     }).catchError((_) {
       if (mounted) setState(() => failed = true);
@@ -938,52 +976,84 @@ class _RemoteVideoBubbleState extends State<_RemoteVideoBubble> {
   Widget build(BuildContext context) {
     if (failed) {
       return Container(
-        height: 180,
+        width: widget.circular ? 216 : 300,
+        height: widget.circular ? 216 : 180,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: .2),
-          borderRadius: BorderRadius.circular(15),
+          shape: widget.circular ? BoxShape.circle : BoxShape.rectangle,
+          borderRadius: widget.circular ? null : BorderRadius.circular(15),
         ),
         child: const Icon(Icons.broken_image_rounded, size: 40),
       );
     }
     if (!ready) {
       return Container(
-        height: 180,
+        width: widget.circular ? 216 : 300,
+        height: widget.circular ? 216 : 180,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: .2),
-          borderRadius: BorderRadius.circular(15),
+          shape: widget.circular ? BoxShape.circle : BoxShape.rectangle,
+          borderRadius: widget.circular ? null : BorderRadius.circular(15),
         ),
         child: const CircularProgressIndicator(),
       );
     }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(15),
-      child: GestureDetector(
-        onTap: () {
-          if (controller.value.isPlaying) {
-            controller.pause();
-          } else {
-            controller.play();
-          }
-          setState(() {});
-        },
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            AspectRatio(
+    final video = widget.circular
+        ? ClipOval(
+            child: SizedBox(
+              width: 216,
+              height: 216,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: controller.value.size.width,
+                  height: controller.value.size.height,
+                  child: VideoPlayer(controller),
+                ),
+              ),
+            ),
+          )
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: AspectRatio(
               aspectRatio: controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
               child: VideoPlayer(controller),
             ),
-            if (!controller.value.isPlaying)
-              Container(
-                decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.black54),
-                padding: const EdgeInsets.all(12),
-                child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 38),
+          );
+    return GestureDetector(
+      onTap: () async {
+        if (controller.value.isPlaying) {
+          await controller.pause();
+        } else {
+          if (controller.value.position >= controller.value.duration) {
+            await controller.seekTo(Duration.zero);
+          }
+          await controller.play();
+        }
+        if (mounted) setState(() {});
+      },
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          video,
+          if (!controller.value.isPlaying)
+            Container(
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.black54),
+              padding: const EdgeInsets.all(12),
+              child: Icon(widget.circular ? Icons.play_arrow_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 38),
+            ),
+          if (widget.circular)
+            Positioned(
+              bottom: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                child: const Text('ویدیوپیام', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

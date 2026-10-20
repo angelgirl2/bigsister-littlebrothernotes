@@ -2085,6 +2085,11 @@ class _SettingsTabState extends State<SettingsTab> {
   bool bio = false;
   bool lock = false;
   bool moodSending = false;
+  late final TextEditingController railwayUrl;
+  bool railwaySaving = false;
+  bool railwayChecking = false;
+  String? railwayMessage;
+  bool? railwayConnectionOk;
 
   Future<void> _sendMood(String emoji, String label) async {
     if (moodSending) return;
@@ -2121,6 +2126,89 @@ class _SettingsTabState extends State<SettingsTab> {
     super.initState();
     lock = widget.storage.loadPin() != null;
     bio = widget.storage.loadBiometric();
+    railwayUrl = TextEditingController(
+      text: widget.cloud.baseUrl ?? 'https://bigsister-littlebrothernotes.up.railway.app',
+    );
+  }
+
+  @override
+  void dispose() {
+    railwayUrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveRailwayUrl() async {
+    if (railwaySaving || railwayChecking) return;
+    setState(() {
+      railwaySaving = true;
+      railwayMessage = null;
+      railwayConnectionOk = null;
+    });
+    final previousUrl = widget.cloud.normalizedBaseUrl;
+    try {
+      await widget.cloud.setServerUrl(railwayUrl.text);
+      railwayUrl.text = widget.cloud.normalizedBaseUrl;
+      final changed = previousUrl != widget.cloud.normalizedBaseUrl;
+      if (mounted) {
+        setState(() {
+          railwayMessage = changed
+              ? 'آدرس جدید ذخیره شد. برای اتصال به سرور جدید، وارد دفتر مشترک شو و رمز را دوباره وارد کن.'
+              : 'آدرس Railway ذخیره شد و در اجرای بعدی هم باقی می‌ماند.';
+          railwayConnectionOk = true;
+        });
+      }
+      widget.onRefresh();
+    } on FormatException catch (e) {
+      if (mounted) {
+        setState(() {
+          railwayMessage = e.message.toString();
+          railwayConnectionOk = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          railwayMessage = 'ذخیرهٔ آدرس انجام نشد: $e';
+          railwayConnectionOk = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => railwaySaving = false);
+    }
+  }
+
+  Future<void> _testRailwayUrl() async {
+    if (railwaySaving || railwayChecking) return;
+    setState(() {
+      railwayChecking = true;
+      railwayMessage = null;
+      railwayConnectionOk = null;
+    });
+    try {
+      await widget.cloud.testServerConnection(url: railwayUrl.text);
+      if (mounted) {
+        setState(() {
+          railwayMessage = 'اتصال موفق است؛ API سرور پاسخ می‌دهد.';
+          railwayConnectionOk = true;
+        });
+      }
+    } on FormatException catch (e) {
+      if (mounted) {
+        setState(() {
+          railwayMessage = e.message.toString();
+          railwayConnectionOk = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          railwayMessage = 'اتصال برقرار نشد. دامنه، اینترنت و وضعیت سرویس Railway/PostgreSQL را بررسی کن.';
+          railwayConnectionOk = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => railwayChecking = false);
+    }
   }
 
   Future<void> togglePin() async {
@@ -2389,6 +2477,96 @@ class _SettingsTabState extends State<SettingsTab> {
                     },
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _Glass(
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.cloud_sync_rounded, color: c.primary),
+                        const SizedBox(width: 9),
+                        const Expanded(
+                          child: Text(
+                            'تنظیمات سرور Railway',
+                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    const Text(
+                      'آدرس سرور هر زمان قابل تغییر است و روی همین دستگاه ذخیره می‌شود. برای همگام‌سازی دوطرفه، روی هر دو گوشی یک آدرس یکسان وارد کن.',
+                      style: TextStyle(color: Colors.white60, height: 1.5),
+                    ),
+                    const SizedBox(height: 13),
+                    TextField(
+                      controller: railwayUrl,
+                      keyboardType: TextInputType.url,
+                      textDirection: TextDirection.ltr,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: const InputDecoration(
+                        labelText: 'آدرس اصلی Railway',
+                        hintText: 'https://your-service.up.railway.app',
+                        prefixIcon: Icon(Icons.link_rounded),
+                      ),
+                      onChanged: (_) {
+                        if (railwayMessage != null && mounted) {
+                          setState(() {
+                            railwayMessage = null;
+                            railwayConnectionOk = null;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 9,
+                      runSpacing: 9,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: (railwaySaving || railwayChecking) ? null : _saveRailwayUrl,
+                          icon: railwaySaving
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.save_rounded),
+                          label: const Text('ذخیره آدرس'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: (railwaySaving || railwayChecking) ? null : _testRailwayUrl,
+                          icon: railwayChecking
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.wifi_tethering_rounded),
+                          label: const Text('بررسی اتصال'),
+                        ),
+                      ],
+                    ),
+                    if (railwayMessage != null) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            railwayConnectionOk == true ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                            color: railwayConnectionOk == true ? c.primary : Colors.orangeAccent,
+                            size: 19,
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              railwayMessage!,
+                              style: const TextStyle(color: Colors.white70, height: 1.45),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 14),

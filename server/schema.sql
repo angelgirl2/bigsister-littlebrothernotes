@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_type_check;
-ALTER TABLE messages ADD CONSTRAINT messages_type_check CHECK (type IN ('text','image','video','audio','file'));
+ALTER TABLE messages ADD CONSTRAINT messages_type_check CHECK (type IN ('text','image','video','video_note','audio','file'));
 
 CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at DESC);
 
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS media (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE media DROP CONSTRAINT IF EXISTS media_kind_check;
-ALTER TABLE media ADD CONSTRAINT media_kind_check CHECK (kind IN ('image','video','audio','file'));
+ALTER TABLE media ADD CONSTRAINT media_kind_check CHECK (kind IN ('image','video','video_note','audio','file'));
 
 CREATE INDEX IF NOT EXISTS idx_media_room ON media(room_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_media_room_hash ON media(room_id, content_hash) WHERE content_hash IS NOT NULL;

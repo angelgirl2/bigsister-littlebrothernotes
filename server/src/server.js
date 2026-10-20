@@ -413,7 +413,7 @@ async function saveMediaRecord({ roomId, uploaderId, kind, file, contentHash }) 
 app.post('/api/media', auth, upload.single('file'), async (req, res) => {
   await touchDevice(req.user.deviceId);
   if (!req.file) return res.status(400).json({ error: 'file_required' });
-  const kind = ['image', 'video', 'audio', 'file'].includes(req.body?.kind) ? req.body.kind : 'file';
+  const kind = ['image', 'video', 'video_note', 'audio', 'file'].includes(req.body?.kind) ? req.body.kind : 'file';
   try {
     const contentHash = await sha256File(req.file.path);
     const saved = await saveMediaRecord({
@@ -433,7 +433,7 @@ app.post('/api/media', auth, upload.single('file'), async (req, res) => {
 app.post('/api/sync/media', auth, upload.single('file'), async (req, res) => {
   await touchDevice(req.user.deviceId);
   if (!req.file) return res.status(400).json({ error: 'file_required' });
-  const kind = ['image', 'video', 'audio'].includes(req.body?.kind) ? req.body.kind : 'file';
+  const kind = ['image', 'video', 'video_note', 'audio'].includes(req.body?.kind) ? req.body.kind : 'file';
   try {
     const contentHash = String(req.body?.sha256 || '').trim().toLowerCase() || await sha256File(req.file.path);
     if (!/^[a-f0-9]{64}$/.test(contentHash)) {
@@ -475,7 +475,7 @@ async function createChatMessage({ roomId, deviceId, body, id, type, attachmentI
   const messageId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedId)
     ? requestedId
     : crypto.randomUUID();
-  const safeType = ['text','image','video','audio','file'].includes(type) ? type : 'text';
+  const safeType = ['text','image','video','video_note','audio','file'].includes(type) ? type : 'text';
   const safeBody = String(body || '').slice(0, 20000);
   const safeAttachmentId = attachmentId || null;
   const safeAttachmentName = attachmentName ? String(attachmentName).slice(0, 255) : null;

@@ -23,6 +23,7 @@ class CloudService {
   static const _deviceIdKey = 'big_sister_cloud_device_v1';
   static const _roleKey = 'big_sister_cloud_role_v1';
   static const _labelKey = 'big_sister_cloud_label_v1';
+  static const _apiUrlKey = 'big_sister_cloud_api_url_v1';
 
   final FlutterSecureStorage _secure = const FlutterSecureStorage();
   final StreamController<void> _contentChanged = StreamController<void>.broadcast();
@@ -87,10 +88,66 @@ class CloudService {
     return normalized;
   }
 
+  String _validatedServerUrl(String value) {
+    final input = value.trim();
+    if (input.isEmpty) {
+      throw const FormatException('آدرس سرور را وارد کن.');
+    }
+    final uri = Uri.tryParse(input);
+    if (uri == null ||
+        !uri.hasAuthority ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
+      throw const FormatException(
+        'آدرس معتبر نیست؛ آدرس کامل را با https:// وارد کن.',
+      );
+    }
+    if (uri.userInfo.isNotEmpty ||
+        uri.query.isNotEmpty ||
+        uri.fragment.isNotEmpty ||
+        (uri.path.isNotEmpty && uri.path != '/')) {
+      throw const FormatException(
+        'فقط آدرس اصلی دامنه را وارد کن؛ مسیر /api/health را ننویس.',
+      );
+    }
+    return _normalizeUrl(uri.toString());
+  }
+
+  /// آدرس اصلی API را روی همین دستگاه ذخیره می‌کند.
+  /// در صورت تغییر دامنه، نشست سرور قبلی پاک می‌شود تا توکن اشتباه استفاده نشود.
+  Future<void> setServerUrl(String value) async {
+    await init();
+    final normalized = _validatedServerUrl(value);
+    final prefs = await SharedPreferences.getInstance();
+    final changed = normalized != normalizedBaseUrl;
+    if (changed) {
+      await disconnect();
+    }
+    _baseUrl = normalized;
+    _dio = _makeDio(normalized);
+    await prefs.setString(_apiUrlKey, normalized);
+  }
+
+  /// وضعیت واقعی API را با endpoint سلامت backend بررسی می‌کند.
+  Future<void> testServerConnection({String? url}) async {
+    await init();
+    final raw = (url == null || url.trim().isEmpty) ? normalizedBaseUrl : url;
+    final target = _validatedServerUrl(raw);
+    final response = await _makeDio(target).get('/api/health');
+    _ensureOk(response);
+    final data = response.data;
+    if (data is Map && data['ok'] == false) {
+      throw StateError(data['error']?.toString() ?? 'server_not_ready');
+    }
+  }
+
   Future<void> init() async {
     if (_initialized) return;
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = _normalizeUrl(_buildUrl);
+    final savedUrl = prefs.getString(_apiUrlKey)?.trim();
+    _baseUrl = _normalizeUrl(
+      savedUrl != null && savedUrl.isNotEmpty ? savedUrl : _buildUrl,
+    );
     _role = prefs.getString(_roleKey);
     _label = prefs.getString(_labelKey);
     _cachedDeviceId = await _secure.read(key: _deviceIdKey);
