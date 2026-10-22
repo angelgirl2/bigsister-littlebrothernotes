@@ -1,7 +1,7 @@
 {
   "name": "big-sister-sync-server",
   "private": true,
-  "version": "6.5.0",
+  "version": "6.5.2",
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {

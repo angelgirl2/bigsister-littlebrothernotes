@@ -2330,7 +2330,7 @@ class _SettingsTabState extends State<SettingsTab> {
         setState(() {
           railwayMessage = changed
               ? 'آدرس جدید ذخیره شد. برای اتصال به سرور جدید، وارد دفتر مشترک شو و رمز را دوباره وارد کن.'
-              : 'آدرس Railway ذخیره شد و در اجرای بعدی هم باقی می‌ماند.';
+              : 'آدرس سرور ذخیره شد و در اجرای بعدی هم باقی می‌ماند.';
           railwayConnectionOk = true;
         });
       }
@@ -2681,7 +2681,7 @@ class _SettingsTabState extends State<SettingsTab> {
                         const SizedBox(width: 9),
                         const Expanded(
                           child: Text(
-                            'تنظیمات سرور Railway',
+                            'تنظیمات سرور و همگام‌سازی',
                             style: TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
@@ -2703,7 +2703,7 @@ class _SettingsTabState extends State<SettingsTab> {
                       autocorrect: false,
                       enableSuggestions: false,
                       decoration: const InputDecoration(
-                        labelText: 'آدرس اصلی Railway',
+                        labelText: 'آدرس اصلی سرور API',
                         hintText: 'https://your-service.up.railway.app',
                         prefixIcon: Icon(Icons.link_rounded),
                       ),
