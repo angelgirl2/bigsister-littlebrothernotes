@@ -215,3 +215,9 @@ PostgreSQL is ready and the shared room is initialized.
 ```
 
 اگر خطایی وجود داشته باشد، سرویس زنده می‌ماند و در Logs متن دقیق‌تری مثل `DATABASE_URL is missing` یا `JWT_SECRET is missing` یا خطای اتصال PostgreSQL ثبت می‌شود.
+
+## 12) نسخهٔ ۶.۵.۰: چت و تاریخچه تماس
+
+در نسخهٔ ۶.۵.۰، هنگام هر Deploy سرور، `server/schema.sql` ستون‌های سازگار جدید (`edited_at`، `is_pinned`، `reactions`) و جدول `call_history` را به‌صورت افزایشی آماده می‌کند. این نسخه endpointهای جست‌وجو، ویرایش، سنجاق و تاریخچه تماس را به API اضافه می‌کند. سرور باید قبل از نصب APK جدید Deploy شود.
+
+تماس‌ها از سیگنال‌دهی WebSocket در همان اتاق احراز هویت‌شده استفاده می‌کنند و هیچ STUN/TURN عمومی در کلاینت تنظیم نشده است. چون Railway ورودی UDP عمومی برای TURN ندارد، تماس مستقیم روی برخی شبکه‌ها ممکن است برقرار نشود؛ به بخش `UPGRADE_6_5_0_FA.md` مراجعه کن.

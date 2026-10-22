@@ -21,3 +21,5 @@
 - 6.2: حذف کامل نیاز UI به کد/PIN جفت‌سازی؛ ورود یک‌باره برای نقش من/آبجی و همگام‌سازی خودکار پس از آن.
 
 - 6.2: اتصال دوطرفه بدون کد/PIN جفت‌سازی؛ ورود یک‌باره با رمز حساب VPS برای نقش من/آبجی و Sync خودکار پس از آن.
+
+- v6.5.1: clearer speakerphone on/off control for voice calls, native audio-route state only updates after platform success, and localized error feedback. No Firebase added; network access remains available from either phone while paired-room authentication is kept.
