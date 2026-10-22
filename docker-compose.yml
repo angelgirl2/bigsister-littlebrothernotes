@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [private]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      MEDIA_DIR: /data/media
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      ROOM_CODE_TTL_HOURS: ${ROOM_CODE_TTL_HOURS:-24}
+      SHARED_ROOM_KEY: ${SHARED_ROOM_KEY:?Set SHARED_ROOM_KEY in .env}
+      LITTLE_BROTHER_PASSWORD: ${LITTLE_BROTHER_PASSWORD:?Set LITTLE_BROTHER_PASSWORD in .env}
+      BIG_SISTER_PASSWORD: ${BIG_SISTER_PASSWORD:?Set BIG_SISTER_PASSWORD in .env}
+      LITTLE_BROTHER_LABEL: ${LITTLE_BROTHER_LABEL:-داداش کوچیکه}
+      BIG_SISTER_LABEL: ${BIG_SISTER_LABEL:-آبجی بزرگ}
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [private]
+
+networks:
+  private:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  media_data:
