@@ -9,8 +9,12 @@ class ChatMessage {
     this.attachmentName,
     this.replyTo,
     this.reaction,
+    this.reactions = const <String, String>{},
     this.deliveredAt,
     this.readAt,
+    this.isPinned = false,
+    this.editedAt,
+    this.localStatus,
   });
 
   final String id;
@@ -22,8 +26,14 @@ class ChatMessage {
   final String? attachmentName;
   final String? replyTo;
   final String? reaction;
+  /// One reaction per participant (device id -> emoji).
+  final Map<String, String> reactions;
   final DateTime? deliveredAt;
   final DateTime? readAt;
+  final bool isPinned;
+  final DateTime? editedAt;
+  /// Local-only delivery state: pending, failed, or null when server-confirmed.
+  final String? localStatus;
 
   bool get hasAttachment => attachmentId != null && attachmentId!.isNotEmpty;
   bool get isRead => readAt != null;
@@ -35,6 +45,18 @@ class ChatMessage {
       final parsed = DateTime.tryParse(value.toString());
       return parsed?.toLocal();
     }
+    final parsedReactions = <String, String>{};
+    final rawReactions = json['reactions'];
+    if (rawReactions is Map) {
+      for (final entry in rawReactions.entries) {
+        final emoji = entry.value?.toString() ?? '';
+        if (emoji.isNotEmpty) parsedReactions[entry.key.toString()] = emoji;
+      }
+    }
+    final legacyReaction = json['reaction']?.toString();
+    if (parsedReactions.isEmpty && legacyReaction != null && legacyReaction.isNotEmpty) {
+      parsedReactions['legacy'] = legacyReaction;
+    }
     return ChatMessage(
       id: json['id']?.toString() ?? '',
       senderId: json['sender_id']?.toString() ?? json['senderId']?.toString() ?? '',
@@ -44,9 +66,13 @@ class ChatMessage {
       attachmentId: json['attachment_id']?.toString() ?? json['attachmentId']?.toString(),
       attachmentName: json['attachment_name']?.toString() ?? json['attachmentName']?.toString(),
       replyTo: json['reply_to']?.toString() ?? json['replyTo']?.toString(),
-      reaction: json['reaction']?.toString(),
+      reaction: legacyReaction,
+      reactions: parsedReactions,
       deliveredAt: parse(json['delivered_at'] ?? json['deliveredAt']),
       readAt: parse(json['read_at'] ?? json['readAt']),
+      isPinned: json['is_pinned'] == true || json['isPinned'] == true,
+      editedAt: parse(json['edited_at'] ?? json['editedAt']),
+      localStatus: json['localStatus']?.toString(),
     );
   }
 }

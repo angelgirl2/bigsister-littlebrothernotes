@@ -81,6 +81,10 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'unauthorized' });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    // This deployment is deliberately limited to the two room roles.
+    if (!validateRole(req.user?.role) || !req.user?.deviceId || !req.user?.roomId) {
+      return res.status(401).json({ error: 'invalid_token_role' });
+    }
     return next();
   } catch {
     return res.status(401).json({ error: 'invalid_token' });
@@ -360,11 +364,27 @@ app.get('/api/chat/messages', auth, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 100);
   const before = req.query.before ? new Date(String(req.query.before)) : null;
   const params = [req.user.roomId, limit];
-  let q = `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, created_at, delivered_at, read_at
+  let q = `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions, is_pinned, edited_at, created_at, delivered_at, read_at
            FROM messages WHERE room_id = $1`;
   if (before && !Number.isNaN(before.getTime())) { q += ' AND created_at < $3'; params.push(before); }
   q += ' ORDER BY created_at DESC LIMIT $2';
   const result = await pool.query(q, params);
+  return res.json({ messages: result.rows.reverse() });
+});
+
+// Search message text and attachment names only inside the authenticated shared room.
+app.get('/api/chat/search', auth, async (req, res) => {
+  const query = String(req.query.q || '').trim().slice(0, 160);
+  if (!query) return res.json({ messages: [] });
+  const limit = Math.min(Math.max(Number(req.query.limit || 80), 1), 100);
+  const result = await pool.query(
+    `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions,
+            is_pinned, edited_at, created_at, delivered_at, read_at
+       FROM messages
+      WHERE room_id = $1 AND (body ILIKE $2 OR COALESCE(attachment_name, '') ILIKE $2)
+      ORDER BY created_at DESC LIMIT $3`,
+    [req.user.roomId, `%${query}%`, limit],
+  );
   return res.json({ messages: result.rows.reverse() });
 });
 
@@ -501,7 +521,7 @@ async function createChatMessage({ roomId, deviceId, body, id, type, attachmentI
     `INSERT INTO messages(id, room_id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, delivered_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
      ON CONFLICT (id) DO NOTHING
-     RETURNING id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, created_at, delivered_at, read_at`,
+     RETURNING id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions, is_pinned, edited_at, created_at, delivered_at, read_at`,
     [messageId, roomId, deviceId, safeType, safeBody, safeAttachmentId, safeAttachmentName, safeReplyTo, safeReaction],
   );
   if (result.rows[0]) {
@@ -510,7 +530,7 @@ async function createChatMessage({ roomId, deviceId, body, id, type, attachmentI
     return message;
   }
   const existing = await pool.query(
-    `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, created_at, delivered_at, read_at
+    `SELECT id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions, is_pinned, edited_at, created_at, delivered_at, read_at
      FROM messages WHERE id = $1 AND room_id = $2`,
     [messageId, roomId],
   );
@@ -553,15 +573,56 @@ app.patch('/api/chat/messages/:id/read', auth, async (req, res) => {
 });
 
 app.patch('/api/chat/messages/:id/reaction', auth, async (req, res) => {
-  const reaction = String(req.body?.reaction || '').slice(0, 8);
+  const reaction = String(req.body?.reaction || '').trim().slice(0, 16);
   const updated = await pool.query(
-    `UPDATE messages SET reaction = $3
-     WHERE id = $1 AND room_id = $2 RETURNING id, reaction`,
-    [req.params.id, req.user.roomId, reaction || null],
+    `UPDATE messages
+        SET reactions = CASE
+              WHEN $3 = '' THEN COALESCE(reactions, '{}'::jsonb) - $4::text
+              ELSE COALESCE(reactions, '{}'::jsonb) || jsonb_build_object($4::text, $3::text)
+            END,
+            reaction = CASE WHEN $3 = '' THEN NULL ELSE $3 END
+      WHERE id = $1 AND room_id = $2
+      RETURNING id, reaction, reactions`,
+    [req.params.id, req.user.roomId, reaction, req.user.deviceId],
   );
   if (!updated.rows[0]) return res.status(404).json({ error: 'message_not_found' });
-  io.to(`room:${req.user.roomId}`).emit('chat:reaction', { id: req.params.id, reaction: updated.rows[0].reaction });
+  io.to(`room:${req.user.roomId}`).emit('chat:reaction', {
+    id: req.params.id,
+    reaction: updated.rows[0].reaction,
+    reactions: updated.rows[0].reactions || {},
+    fromDeviceId: req.user.deviceId,
+  });
   return res.json(updated.rows[0]);
+});
+
+app.patch('/api/chat/messages/:id/edit', auth, async (req, res) => {
+  const body = String(req.body?.body ?? '').trim().slice(0, 20000);
+  if (!body) return res.status(400).json({ error: 'message_body_required' });
+  const updated = await pool.query(
+    `UPDATE messages SET body = $3, edited_at = now()
+      WHERE id = $1 AND room_id = $2 AND sender_id = $4
+        AND created_at >= now() - interval '15 minutes'
+      RETURNING id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions,
+                is_pinned, edited_at, created_at, delivered_at, read_at`,
+    [req.params.id, req.user.roomId, body, req.user.deviceId],
+  );
+  if (!updated.rows[0]) return res.status(409).json({ error: 'message_not_editable' });
+  io.to(`room:${req.user.roomId}`).emit('chat:edited', updated.rows[0]);
+  return res.json({ message: updated.rows[0] });
+});
+
+app.patch('/api/chat/messages/:id/pin', auth, async (req, res) => {
+  const pinned = req.body?.pinned === true;
+  const updated = await pool.query(
+    `UPDATE messages SET is_pinned = $3
+      WHERE id = $1 AND room_id = $2
+      RETURNING id, sender_id, type, body, attachment_id, attachment_name, reply_to, reaction, reactions,
+                is_pinned, edited_at, created_at, delivered_at, read_at`,
+    [req.params.id, req.user.roomId, pinned],
+  );
+  if (!updated.rows[0]) return res.status(404).json({ error: 'message_not_found' });
+  io.to(`room:${req.user.roomId}`).emit('chat:pinned', updated.rows[0]);
+  return res.json({ message: updated.rows[0] });
 });
 
 app.delete('/api/chat/messages/:id', auth, async (req, res) => {
@@ -611,6 +672,28 @@ app.delete('/api/chat/messages/:id', auth, async (req, res) => {
   }
 });
 
+app.get('/api/calls/history', auth, async (req, res) => {
+  // Calls whose caller disappeared while ringing are finalized as missed on next sync.
+  await pool.query(
+    `UPDATE call_history SET status='missed', ended_at=COALESCE(ended_at, now()), updated_at=now()
+      WHERE room_id=$1 AND status='ringing' AND created_at < now() - interval '45 seconds'`,
+    [req.user.roomId],
+  );
+  const limit = Math.min(Math.max(Number(req.query.limit || 40), 1), 100);
+  const result = await pool.query(
+    `SELECT c.call_id, c.caller_device_id, c.callee_device_id, c.call_type, c.status,
+            c.created_at, c.answered_at, c.ended_at, c.duration_seconds,
+            caller.role AS caller_role, callee.role AS callee_role
+       FROM call_history c
+       LEFT JOIN devices caller ON caller.id = c.caller_device_id
+       LEFT JOIN devices callee ON callee.id = c.callee_device_id
+      WHERE c.room_id = $1
+      ORDER BY c.created_at DESC LIMIT $2`,
+    [req.user.roomId, limit],
+  );
+  return res.json({ calls: result.rows });
+});
+
 app.get('/api/letters', auth, async (req, res) => {
   await touchDevice(req.user.deviceId);
   const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 200);
@@ -657,6 +740,9 @@ io.use((socket, next) => {
     const header = socket.handshake.auth?.token || socket.handshake.headers?.authorization || '';
     const token = String(header).startsWith('Bearer ') ? String(header).slice(7) : String(header);
     socket.user = jwt.verify(token, JWT_SECRET);
+    if (!validateRole(socket.user?.role) || !socket.user?.deviceId || !socket.user?.roomId) {
+      return next(new Error('unauthorized'));
+    }
     return next();
   } catch {
     return next(new Error('unauthorized'));
@@ -688,6 +774,70 @@ io.on('connection', async (socket) => {
 
   socket.on('typing', (value) => {
     socket.to(`room:${roomId}`).emit('typing', { deviceId, typing: Boolean(value) });
+  });
+
+  // Call signaling and call records are scoped to the authenticated two-person room.
+  socket.on('call:signal', async (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const type = String(payload.type || '');
+    if (!['offer', 'answer', 'candidate', 'hangup', 'decline', 'busy'].includes(type)) return;
+    const callId = String(payload.callId || '').slice(0, 80);
+    if (!callId) return;
+    const safe = { type, callId, fromDeviceId: deviceId };
+    if (type === 'offer') {
+      safe.video = payload.video === true;
+      safe.sdp = String(payload.sdp || '').slice(0, 100000);
+      safe.sdpType = String(payload.sdpType || 'offer').slice(0, 20);
+      try {
+        const other = await pool.query(
+          'SELECT id FROM devices WHERE room_id = $1 AND id <> $2 ORDER BY created_at LIMIT 1',
+          [roomId, deviceId],
+        );
+        await pool.query(
+          `INSERT INTO call_history(call_id, room_id, caller_device_id, callee_device_id, call_type, status)
+           VALUES ($1,$2,$3,$4,$5,'ringing') ON CONFLICT(call_id) DO NOTHING`,
+          [callId, roomId, deviceId, other.rows[0]?.id || null, safe.video ? 'video' : 'audio'],
+        );
+      } catch (error) { console.error('call_history_offer_failed', error?.message || error); }
+    } else if (type === 'answer') {
+      safe.sdp = String(payload.sdp || '').slice(0, 100000);
+      safe.sdpType = String(payload.sdpType || 'answer').slice(0, 20);
+      await pool.query(
+        `UPDATE call_history SET status='answered', answered_at=COALESCE(answered_at, now()), updated_at=now()
+         WHERE call_id=$1 AND room_id=$2`, [callId, roomId],
+      ).catch((error) => console.error('call_history_answer_failed', error?.message || error));
+    } else if (type === 'candidate') {
+      safe.candidate = String(payload.candidate || '').slice(0, 4000);
+      safe.sdpMid = payload.sdpMid == null ? null : String(payload.sdpMid).slice(0, 100);
+      safe.sdpMLineIndex = Number.isInteger(payload.sdpMLineIndex) ? payload.sdpMLineIndex : null;
+    } else if (type === 'hangup' || type === 'decline' || type === 'busy') {
+      try {
+        const current = await pool.query(
+          'SELECT caller_device_id, status, answered_at, call_type FROM call_history WHERE call_id=$1 AND room_id=$2',
+          [callId, roomId],
+        );
+        const row = current.rows[0];
+        if (row) {
+          let status = 'ended';
+          if (type === 'decline') status = 'declined';
+          else if (type === 'busy') status = 'busy';
+          else if (row.status === 'ringing') {
+            const timedOutByCaller = type === 'hangup' && payload.missed === true && deviceId === row.caller_device_id;
+            status = timedOutByCaller ? 'missed' : (type === 'hangup' ? 'cancelled' : 'declined');
+            safe.missed = timedOutByCaller;
+            safe.video = row.call_type === 'video';
+          }
+          await pool.query(
+            `UPDATE call_history SET status=$3, ended_at=COALESCE(ended_at, now()),
+               duration_seconds=CASE WHEN answered_at IS NULL THEN 0 ELSE GREATEST(0, floor(extract(epoch FROM (now()-answered_at)))::int) END,
+               updated_at=now() WHERE call_id=$1 AND room_id=$2`,
+            [callId, roomId, status],
+          );
+        }
+      } catch (error) { console.error('call_history_end_failed', error?.message || error); }
+    }
+    // Never broadcast call offers outside the authenticated room.
+    socket.to(`room:${roomId}`).emit('call:signal', safe);
   });
 
   socket.on('chat:send', async (payload, ack) => {

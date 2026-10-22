@@ -33,6 +33,7 @@ class CloudService {
   final StreamController<Map<String, dynamic>> _presence = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _messageStatus = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _deletedMessages = StreamController<String>.broadcast();
+  final StreamController<Map<String, dynamic>> _callSignals = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<bool> _connectionChanged = StreamController<bool>.broadcast();
   IO.Socket? _socket;
   Dio? _dio;
@@ -51,6 +52,7 @@ class CloudService {
   Stream<Map<String, dynamic>> get presenceChanges => _presence.stream;
   Stream<Map<String, dynamic>> get messageStatusChanges => _messageStatus.stream;
   Stream<String> get deletedMessages => _deletedMessages.stream;
+  Stream<Map<String, dynamic>> get callSignals => _callSignals.stream;
   Stream<bool> get connectionChanges => _connectionChanged.stream;
   bool get online => _online;
 
@@ -250,6 +252,9 @@ class CloudService {
         _online = false;
         _connectionChanged.add(false);
       })
+      ..on('call:signal', (data) {
+        if (data is Map) _callSignals.add(Map<String, dynamic>.from(data));
+      })
       ..on('content:changed', (_) => _contentChanged.add(null))
       ..on('pair:completed', (_) => _contentChanged.add(null))
       ..on('chat:message', (data) {
@@ -266,7 +271,13 @@ class CloudService {
       })
       ..on('letter:new', (data) {
         try {
-          if (data is Map) _letters.add(CloudLetter.fromJson(Map<String, dynamic>.from(data)));
+          if (data is Map) {
+            final letter = CloudLetter.fromJson(Map<String, dynamic>.from(data));
+            _letters.add(letter);
+            if (_cachedDeviceId == null || letter.senderId != _cachedDeviceId) {
+              unawaited(NotificationService.instance.showIncomingLetter(id: letter.id, title: letter.title));
+            }
+          }
         } catch (_) {}
       })
       ..on('chat:read', (data) {
@@ -277,6 +288,12 @@ class CloudService {
       })
       ..on('chat:reaction', (data) {
         if (data is Map) _messageStatus.add({'type': 'reaction', ...Map<String, dynamic>.from(data)});
+      })
+      ..on('chat:edited', (data) {
+        if (data is Map) _messageStatus.add({'eventType': 'edit', ...Map<String, dynamic>.from(data)});
+      })
+      ..on('chat:pinned', (data) {
+        if (data is Map) _messageStatus.add({'eventType': 'pin', ...Map<String, dynamic>.from(data)});
       })
       ..on('chat:deleted', (data) {
         final id = data is Map ? data['id']?.toString() : data?.toString();
@@ -580,6 +597,58 @@ class CloudService {
     } catch (_) {}
   }
 
+  Future<List<ChatMessage>> searchMessages(String query, {int limit = 100}) async {
+    final t = await token;
+    if (t == null || query.trim().isEmpty) return [];
+    final response = await _dio!.get(
+      '/api/chat/search',
+      queryParameters: {'q': query.trim(), 'limit': limit},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    final list = response.data['messages'] as List? ?? const [];
+    return list.map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  Future<ChatMessage> editMessage(String id, String body) async {
+    final t = await token;
+    if (t == null || t.isEmpty) throw StateError('Not connected');
+    final response = await _dio!.patch(
+      '/api/chat/messages/$id/edit',
+      data: {'body': body.trim()},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    return ChatMessage.fromJson(Map<String, dynamic>.from(response.data['message'] as Map));
+  }
+
+  Future<ChatMessage> pinMessage(String id, bool pinned) async {
+    final t = await token;
+    if (t == null || t.isEmpty) throw StateError('Not connected');
+    final response = await _dio!.patch(
+      '/api/chat/messages/$id/pin',
+      data: {'pinned': pinned},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    return ChatMessage.fromJson(Map<String, dynamic>.from(response.data['message'] as Map));
+  }
+
+  Future<List<Map<String, dynamic>>> fetchCallHistory({int limit = 40}) async {
+    final t = await token;
+    if (t == null || t.isEmpty) return [];
+    final response = await _dio!.get(
+      '/api/calls/history',
+      queryParameters: {'limit': limit},
+      options: Options(headers: {'Authorization': 'Bearer $t'}),
+    );
+    _ensureOk(response);
+    return (response.data['calls'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
   Future<CloudLetter> sendLetter({required String title, required String body}) async {
     final t = await token;
     if (t == null || t.isEmpty) throw StateError('Not connected');
@@ -646,15 +715,22 @@ class CloudService {
     _ensureOk(response);
   }
 
-  Future<void> react(String id, String reaction) async {
+  Future<Map<String, dynamic>> react(String id, String reaction) async {
     final t = await token;
-    if (t == null) return;
+    if (t == null) throw StateError('Not connected');
     final response = await _dio!.patch(
       '/api/chat/messages/$id/reaction',
       data: {'reaction': reaction},
       options: Options(headers: {'Authorization': 'Bearer $t'}),
     );
     _ensureOk(response);
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<void> sendCallSignal(Map<String, dynamic> payload) async {
+    await init();
+    if (!_online || _socket == null) throw StateError('سرور چت برای تماس متصل نیست.');
+    _socket!.emit('call:signal', payload);
   }
 
   void setTyping(bool value) => _socket?.emit('typing', value);

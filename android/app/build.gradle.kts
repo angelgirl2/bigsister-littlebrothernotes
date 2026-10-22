@@ -7,16 +7,16 @@ plugins {
 }
 
 android {
-    namespace = "com.angelgirlbrand.brainmemory"
+    namespace = "com.angelgirlbrand.bigsisternotes"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.angelgirlbrand.brainmemory"
-        minSdk = flutter.minSdkVersion
+        applicationId = "com.angelgirlbrand.bigsisternotes"
+        minSdk = 24
         targetSdk = 36
 
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 12
+        versionName = "6.5.0"
 
         ndk {
             abiFilters += listOf(
@@ -30,43 +30,24 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
         jvmTarget = "17"
     }
 
-    signingConfigs {
-        create("release") {
-            val keystorePropertiesFile = rootProject.file("key.properties")
-
-            if (keystorePropertiesFile.exists()) {
-                val props = Properties()
-
-                keystorePropertiesFile.inputStream().use {
-                    props.load(it)
-                }
-
-                keyAlias = props.getProperty("keyAlias")
-                keyPassword = props.getProperty("keyPassword")
-                storePassword = props.getProperty("storePassword")
-
-                val storeFilePath = props.getProperty("storeFile")
-
-                if (!storeFilePath.isNullOrBlank()) {
-                    storeFile = file(storeFilePath)
-                }
-            }
-        }
-    }
-
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             isShrinkResources = false
         }
     }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 flutter {

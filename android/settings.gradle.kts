@@ -1,4 +1,4 @@
-﻿pluginManagement {
+pluginManagement {
     val flutterSdkPath = run {
         val properties = java.util.Properties()
 
@@ -48,6 +48,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BrainMemory"
+rootProject.name = "BigSisterNotes"
 
 include(":app")

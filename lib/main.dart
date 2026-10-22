@@ -6,8 +6,8 @@ import 'dart:ui' as ui;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
@@ -25,6 +25,7 @@ import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
+import 'utils/persian_date.dart';
 import 'widgets/animated_background.dart';
 
 const quotes = <String>[
@@ -142,6 +143,9 @@ class _BigSisterAppState extends State<BigSisterApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'آبجی بزرگ و داداش کوچیکه',
+      locale: const Locale('fa', 'IR'),
+      supportedLocales: const [Locale('fa', 'IR'), Locale('en', 'US')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: buildDarkTheme(theme),
       // بعضی Routeها/ویجت‌های Material در صورت نداشتن رنگ سطح،
       // رنگ خاکستری پیش‌فرض سیستم را تا قبل از paint شدن محتوا نشان می‌دهند.
@@ -643,7 +647,7 @@ class HomeTab extends StatelessWidget {
                         ),
                         const SizedBox(height: 5),
                         Text(
-                          DateFormat('d MMMM yyyy', 'fa').format(now),
+                          PersianDate.date(now),
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: .48),
                           ),
@@ -1344,7 +1348,7 @@ class _NoteCardState extends State<_NoteCard> {
               ),
               const SizedBox(height: 8),
               Text(
-                DateFormat('yyyy/MM/dd • HH:mm').format(n.updatedAt),
+                PersianDate.dateTime(n.updatedAt),
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: .33),
                   fontSize: 11,
@@ -1663,7 +1667,7 @@ class _MemoryCard extends StatelessWidget {
                       ),
                     const SizedBox(height: 5),
                     Text(
-                      DateFormat('yyyy/MM/dd').format(note.createdAt),
+                      PersianDate.date(note.createdAt),
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 10,
@@ -1693,16 +1697,19 @@ class _MemoryCalendar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final first = DateTime(now.year, now.month, 1);
-    final days = DateTime(now.year, now.month + 1, 0).day;
-    final offset = first.weekday % 7;
+    final jalaliNow = PersianDate.fromGregorian(now);
+    final jy = jalaliNow.year;
+    final jm = jalaliNow.month;
+    final first = PersianDate.toGregorian(jy, jm, 1);
+    final days = PersianDate.daysInMonth(jy, jm);
+    final offset = (first.weekday + 1) % 7;
     final totalCells = offset + days;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 145),
       children: [
         Text(
-          DateFormat('MMMM yyyy', 'fa').format(now),
+          PersianDate.monthYear(now),
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
           textAlign: TextAlign.center,
         ),
@@ -1743,7 +1750,7 @@ class _MemoryCalendar extends StatelessWidget {
                 itemBuilder: (context, index) {
                   if (index < offset) return const SizedBox();
                   final day = index - offset + 1;
-                  final date = DateTime(now.year, now.month, day);
+                  final date = PersianDate.toGregorian(jy, jm, day);
                   final matches = notes
                       .where(
                         (n) =>
@@ -1775,7 +1782,7 @@ class _MemoryCalendar extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              '$day',
+                              PersianDate.digits('$day'),
                               style: TextStyle(
                                 fontWeight: FontWeight.w900,
                                 color: hasMemory ? color : Colors.white70,
@@ -2059,7 +2066,7 @@ class _LettersTabState extends State<LettersTab> {
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                     subtitle: Text(
-                      '${mine ? 'ارسال‌شده' : 'دریافتی'} • ${DateFormat('yyyy/MM/dd  HH:mm').format(letter.createdAt.toLocal())}\n${letter.body}',
+                      '${mine ? 'ارسال‌شده' : 'دریافتی'} • ${PersianDate.dateTime(letter.createdAt.toLocal())}\n${letter.body}',
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -3544,7 +3551,7 @@ class _TrashScreenState extends State<TrashScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'حذف شده: ${DateFormat('yyyy/MM/dd HH:mm').format(n.deletedAt!)}',
+                          'حذف شده: ${PersianDate.dateTime(n.deletedAt!)}',
                           style: const TextStyle(
                             color: Colors.white54,
                             fontSize: 11,
@@ -3960,12 +3967,11 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   Future<void> schedule() async {
     final now = DateTime.now();
     final base = reminder ?? now.add(const Duration(minutes: 10));
-    final pickedDate = await showDatePicker(
-      context: context,
+    final pickedDate = await PersianDate.pickDate(
+      context,
       firstDate: DateTime(now.year, now.month, now.day),
       lastDate: DateTime(now.year + 5),
       initialDate: DateTime(base.year, base.month, base.day),
-      helpText: 'تاریخ یادآوری این یادداشت',
     );
     if (pickedDate == null || !mounted) return;
     final pickedTime = await showTimePicker(
@@ -4285,7 +4291,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
                       subtitle: Text(
                         reminder == null
                             ? 'برای این یادداشت زمان یادآوری انتخاب کن'
-                            : DateFormat('yyyy/MM/dd HH:mm').format(reminder!),
+                            : PersianDate.dateTime(reminder!),
                       ),
                     ),
                     if (audioPath != null || recording) _audioEditor(c.primary),

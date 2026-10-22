@@ -92,3 +92,29 @@ CREATE TABLE IF NOT EXISTS letters (
   read_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_letters_room_created ON letters(room_id, created_at ASC);
+
+
+-- Chat reliability features: edited messages and pinned messages.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_messages_room_pinned ON messages(room_id, is_pinned) WHERE is_pinned = TRUE;
+CREATE INDEX IF NOT EXISTS idx_messages_room_edited ON messages(room_id, edited_at DESC);
+
+-- Persistent call history shared only by authenticated members of the room.
+CREATE TABLE IF NOT EXISTS call_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  call_id VARCHAR(80) UNIQUE NOT NULL,
+  room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  caller_device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  callee_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+  call_type VARCHAR(8) NOT NULL CHECK (call_type IN ('audio','video')),
+  status VARCHAR(16) NOT NULL DEFAULT 'ringing'
+    CHECK (status IN ('ringing','answered','missed','declined','cancelled','ended','busy','failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_call_history_room_created ON call_history(room_id, created_at DESC);

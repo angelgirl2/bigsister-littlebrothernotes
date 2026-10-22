@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -6,13 +7,17 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../cloud/chat_models.dart';
 import '../cloud/cloud_service.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
+import '../services/call_service.dart';
+import '../services/notification_service.dart';
 import '../utils/persian_date.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -36,6 +41,18 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<Map<String, dynamic>>? presenceSub;
   StreamSubscription<Map<String, dynamic>>? statusSub;
   StreamSubscription<String>? deletedSub;
+  StreamSubscription<bool>? connectionSub;
+  StreamSubscription<CallSession>? callStateSub;
+  final TextEditingController searchController = TextEditingController();
+  Timer? searchTimer;
+  Timer? outboxRetryTimer;
+  bool searchMode = false;
+  bool _flushingOutbox = false;
+  List<ChatMessage> searchResults = <ChatMessage>[];
+  List<Map<String, dynamic>> _outbox = <Map<String, dynamic>>[];
+
+  String get _outboxPrefsKey => 'big_sister_chat_outbox_v2_${myDeviceId ?? 'local'}';
+  bool callDialogOpen = false;
   Timer? typingTimer;
   bool loading = true;
   bool sending = false;
@@ -55,7 +72,22 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _load();
+    unawaited(CallService.instance.initialize());
+    callStateSub = CallService.instance.states.listen((state) {
+      if (state.status == 'ringing' && mounted && !callDialogOpen) {
+        WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted && !callDialogOpen) _showCallDialog(); });
+      }
+    });
     messageSub = cloud.incomingMessages.listen(_onIncomingMessage);
+    connectionSub = cloud.connectionChanges.listen((connected) {
+      if (connected) unawaited(_flushOutbox());
+    });
+    outboxRetryTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (cloud.online) {
+        unawaited(_flushOutbox());
+        unawaited(_checkMissedCalls());
+      }
+    });
     typingSub = cloud.typingChanges.listen((v) {
       if (mounted) setState(() => otherTyping = v);
     });
@@ -65,14 +97,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final index = messages.indexWhere((m) => m.id == id);
       if (index == -1) return;
       final old = messages[index];
-      final type = data['type']?.toString();
+      final type = data['eventType']?.toString() ?? data['type']?.toString();
       setState(() {
-        if (type == 'reaction') {
-          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: data['reaction']?.toString(), deliveredAt: old.deliveredAt, readAt: old.readAt);
+        if (type == 'edit' || type == 'pin') {
+          messages[index] = ChatMessage.fromJson(data);
+        } else if (type == 'reaction') {
+          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: data['reaction']?.toString(), reactions: _parseReactionMap(data['reactions'], fallback: old.reactions), deliveredAt: old.deliveredAt, readAt: old.readAt, isPinned: old.isPinned, editedAt: old.editedAt, localStatus: old.localStatus);
         } else if (type == 'read') {
-          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: old.reaction, deliveredAt: old.deliveredAt, readAt: old.readAt ?? DateTime.now());
+          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: old.reaction, reactions: old.reactions, deliveredAt: old.deliveredAt, readAt: old.readAt ?? DateTime.now(), isPinned: old.isPinned, editedAt: old.editedAt, localStatus: old.localStatus);
         } else if (type == 'delivered') {
-          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: old.reaction, deliveredAt: old.deliveredAt ?? DateTime.now(), readAt: old.readAt);
+          messages[index] = ChatMessage(id: old.id, senderId: old.senderId, type: old.type, body: old.body, createdAt: old.createdAt, attachmentId: old.attachmentId, attachmentName: old.attachmentName, replyTo: old.replyTo, reaction: old.reaction, reactions: old.reactions, deliveredAt: old.deliveredAt ?? DateTime.now(), readAt: old.readAt, isPinned: old.isPinned, editedAt: old.editedAt, localStatus: old.localStatus);
         }
       });
     });
@@ -104,7 +138,13 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       myDeviceId = await cloud.deviceId;
       token = await cloud.authHeaderToken();
-      final loaded = await cloud.fetchMessages(limit: 80);
+      final loaded = await cloud.fetchMessages(limit: 100);
+      await _loadOutbox();
+      final ids = loaded.map((m) => m.id).toSet();
+      for (final item in _outbox) {
+        final id = item['id']?.toString() ?? '';
+        if (id.isNotEmpty && !ids.contains(id)) loaded.add(_queuedMessage(item, 'pending'));
+      }
       if (!mounted) return;
       setState(() {
         messages
@@ -113,9 +153,202 @@ class _ChatScreenState extends State<ChatScreen> {
         loading = false;
       });
       await _markUnread(loaded);
+      await _checkMissedCalls();
       _scrollToBottom(animated: false);
+      if (cloud.online) unawaited(_flushOutbox());
     } catch (_) {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _loadOutbox() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_outboxPrefsKey);
+    if (raw == null || raw.isEmpty) {
+      _outbox = <Map<String, dynamic>>[];
+      return;
+    }
+    try {
+      final parsed = jsonDecode(raw);
+      _outbox = parsed is List
+          ? parsed.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+          : <Map<String, dynamic>>[];
+    } catch (_) {
+      _outbox = <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> _saveOutbox() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_outboxPrefsKey, jsonEncode(_outbox));
+  }
+
+  ChatMessage _queuedMessage(Map<String, dynamic> item, String status) {
+    final created = DateTime.tryParse(item['createdAt']?.toString() ?? '')?.toLocal() ?? DateTime.now();
+    final kind = item['kind']?.toString() ?? 'text';
+    return ChatMessage(
+      id: item['id']?.toString() ?? '',
+      senderId: myDeviceId ?? 'self',
+      type: kind,
+      body: item['body']?.toString() ?? '',
+      createdAt: created,
+      attachmentName: item['attachmentName']?.toString(),
+      replyTo: item['replyTo']?.toString(),
+      localStatus: status,
+    );
+  }
+
+  Future<void> _queueTextFailure({required String id, required String body, String? replyTo, required DateTime createdAt}) async {
+    _outbox.removeWhere((item) => item['id']?.toString() == id);
+    _outbox.add({'id': id, 'kind': 'text', 'body': body, 'replyTo': replyTo, 'createdAt': createdAt.toIso8601String(), 'attempts': 0});
+    await _saveOutbox();
+    _replaceMessage(_queuedMessage(_outbox.last, 'pending'));
+  }
+
+  Future<void> _queueFileFailure({required String id, required String path, required String kind, String? replyTo, String caption = '', required DateTime createdAt}) async {
+    final source = File(path);
+    if (!await source.exists()) throw StateError('فایل اصلی برای ارسال مجدد پیدا نشد.');
+    final docs = await getApplicationDocumentsDirectory();
+    final folder = Directory('${docs.path}/BigSisterOutbox');
+    await folder.create(recursive: true);
+    final original = source.uri.pathSegments.last.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final stored = File('${folder.path}/${id}_$original');
+    if (source.path != stored.path) await source.copy(stored.path);
+    _outbox.removeWhere((item) => item['id']?.toString() == id);
+    final item = {'id': id, 'kind': kind, 'body': caption, 'replyTo': replyTo, 'createdAt': createdAt.toIso8601String(), 'path': stored.path, 'attachmentName': original, 'attempts': 0};
+    _outbox.add(item);
+    await _saveOutbox();
+    _replaceMessage(_queuedMessage(item, 'pending'));
+  }
+
+  Future<void> _flushOutbox() async {
+    if (_flushingOutbox || !cloud.configured || !cloud.online || _outbox.isEmpty) return;
+    _flushingOutbox = true;
+    try {
+      while (_outbox.isNotEmpty && cloud.online && mounted) {
+        final item = Map<String, dynamic>.from(_outbox.first);
+        final id = item['id']?.toString() ?? '';
+        final kind = item['kind']?.toString() ?? 'text';
+        try {
+          late final ChatMessage sent;
+          if (kind == 'text') {
+            sent = await cloud.sendText(item['body']?.toString() ?? '', replyTo: item['replyTo']?.toString(), id: id);
+          } else {
+            final path = item['path']?.toString() ?? '';
+            if (path.isEmpty || !await File(path).exists()) throw StateError('فایل صف ارسال پیدا نشد.');
+            sent = await cloud.sendAttachment(path: path, kind: kind, caption: item['body']?.toString() ?? '', replyTo: item['replyTo']?.toString(), id: id);
+          }
+          _outbox.removeWhere((q) => q['id']?.toString() == id);
+          await _saveOutbox();
+          final path = item['path']?.toString();
+          if (path != null && path.isNotEmpty) { try { await File(path).delete(); } catch (_) {} }
+          _replaceMessage(sent);
+        } catch (_) {
+          item['attempts'] = (int.tryParse(item['attempts']?.toString() ?? '') ?? 0) + 1;
+          item['lastAttemptAt'] = DateTime.now().toIso8601String();
+          _outbox[0] = item;
+          await _saveOutbox();
+          _replaceMessage(_queuedMessage(item, 'failed'));
+          break;
+        }
+      }
+    } finally {
+      _flushingOutbox = false;
+    }
+  }
+
+  Future<void> _retryQueuedMessage(String id) async {
+    final index = _outbox.indexWhere((item) => item['id']?.toString() == id);
+    if (index < 0) { final message = _messageById(id); if (message != null) await _resendMessage(message); return; }
+    final item = _outbox.removeAt(index);
+    _outbox.insert(0, item..['attempts'] = 0);
+    await _saveOutbox();
+    await _flushOutbox();
+  }
+
+  Future<void> _checkMissedCalls() async {
+    try {
+      final history = await cloud.fetchCallHistory(limit: 60);
+      for (final call in history) {
+        if (call['status']?.toString() == 'missed' && call['callee_device_id']?.toString() == myDeviceId) {
+          await NotificationService.instance.showMissedCall(
+            callId: call['call_id']?.toString() ?? '',
+            video: call['call_type']?.toString() == 'video',
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _onSearchChanged(String value) {
+    searchTimer?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      if (mounted) setState(() => searchResults = <ChatMessage>[]);
+      return;
+    }
+    searchTimer = Timer(const Duration(milliseconds: 350), () async {
+      try {
+        final results = await cloud.searchMessages(query);
+        if (mounted && searchController.text.trim() == query) setState(() => searchResults = results);
+      } catch (_) {
+        if (mounted && searchController.text.trim() == query) {
+          setState(() => searchResults = messages.where((m) => m.body.toLowerCase().contains(query.toLowerCase()) || (m.attachmentName ?? '').toLowerCase().contains(query.toLowerCase())).toList());
+        }
+      }
+    });
+  }
+
+  Future<void> _showCallHistory() async {
+    try {
+      final calls = await cloud.fetchCallHistory();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Text('تاریخچه تماس‌ها'),
+            content: SizedBox(
+              width: 420,
+              height: 380,
+              child: calls.isEmpty
+                  ? const Center(child: Text('هنوز تماسی ثبت نشده است.'))
+                  : ListView.separated(
+                      itemCount: calls.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) {
+                        final call = calls[index];
+                        final at = DateTime.tryParse(call['created_at']?.toString() ?? '')?.toLocal();
+                        final outgoing = call['caller_device_id']?.toString() == myDeviceId;
+                        final video = call['call_type']?.toString() == 'video';
+                        final status = call['status']?.toString() ?? '';
+                        final subtitle = switch (status) {
+                          'missed' => 'پاسخ داده نشد',
+                          'declined' => 'رد شده',
+                          'cancelled' => 'لغو شده',
+                          'failed' => 'ناموفق',
+                          'busy' => 'مشغول',
+                          'ended' => 'پایان‌یافته · ${PersianDate.digits((call['duration_seconds'] ?? 0).toString())} ثانیه',
+                          'answered' => 'پاسخ داده شد',
+                          'ringing' => 'در انتظار پاسخ',
+                          _ => status,
+                        };
+                        return ListTile(
+                          leading: Icon(status == 'missed' && !outgoing ? Icons.call_missed_rounded : (video ? Icons.video_call_rounded : (outgoing ? Icons.call_made_rounded : Icons.call_received_rounded)), color: status == 'missed' ? Colors.redAccent : null),
+                          title: Text('${outgoing ? 'تماس خروجی' : 'تماس از ${cloud.otherDisplayName}'} · ${video ? 'تصویری' : 'صوتی'}'),
+                          subtitle: Text('${at == null ? '' : '${PersianDate.date(at)} · ${PersianDate.time(at)}'}\n$subtitle'),
+                          isThreeLine: true,
+                        );
+                      },
+                    ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('بستن'))],
+          ),
+        ),
+      );
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تاریخچه تماس دریافت نشد؛ اتصال سرور را بررسی کن.')));
     }
   }
 
@@ -248,34 +481,35 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> sendText() async {
     final text = composer.text.trim();
     if (text.isEmpty || !cloud.configured) return;
-    final id = _newLocalUuid();
     final replyId = replyingTo?.id;
+    composer.clear();
+    setState(() => replyingTo = null);
+    cloud.setTyping(false);
+    await _sendTextBody(text, replyId: replyId);
+  }
+
+  Future<void> _sendTextBody(String text, {String? replyId}) async {
+    if (text.trim().isEmpty || !cloud.configured) return;
+    final id = _newLocalUuid();
+    final createdAt = DateTime.now();
     final optimistic = ChatMessage(
       id: id,
       senderId: myDeviceId ?? 'self',
       type: 'text',
       body: text,
-      createdAt: DateTime.now(),
+      createdAt: createdAt,
       replyTo: replyId,
+      localStatus: 'pending',
     );
-    setState(() {
-      messages.add(optimistic);
-      composer.clear();
-      replyingTo = null;
-    });
-    cloud.setTyping(false);
+    setState(() => messages.add(optimistic));
     _scrollToBottom();
     try {
       final msg = await cloud.sendText(text, replyTo: replyId, id: id);
       _replaceMessage(msg);
       _scrollToBottom();
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        messages.removeWhere((m) => m.id == id);
-        composer.text = text;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال انجام نشد؛ اتصال دفتر مشترک را بررسی کن.')));
+      await _queueTextFailure(id: id, body: text, replyTo: replyId, createdAt: createdAt);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('این پیام در صف ذخیره شد و پس از اتصال دوباره ارسال می‌شود.')));
     }
   }
 
@@ -333,7 +567,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => recording = true);
   }
 
-  Future<void> _sendFile(String path, String kind, {bool deleteLocalAfterSend = false}) async {
+  Future<void> _sendFile(String path, String kind, {bool deleteLocalAfterSend = false, String caption = ''}) async {
     if (!cloud.configured) return;
     final id = _newLocalUuid();
     final replyId = replyingTo?.id;
@@ -341,33 +575,150 @@ class _ChatScreenState extends State<ChatScreen> {
       id: id,
       senderId: myDeviceId ?? 'self',
       type: kind,
-      body: '',
+      body: caption,
       createdAt: DateTime.now(),
       replyTo: replyId,
+      localStatus: 'pending',
     );
+    final createdAt = optimistic.createdAt;
     setState(() {
       messages.add(optimistic);
       replyingTo = null;
     });
     _scrollToBottom();
     try {
-      final msg = await cloud.sendAttachment(path: path, kind: kind, replyTo: replyId, id: id);
+      final msg = await cloud.sendAttachment(path: path, kind: kind, caption: caption, replyTo: replyId, id: id);
       _replaceMessage(msg);
       _scrollToBottom();
     } catch (_) {
-      if (mounted) {
-        setState(() => messages.removeWhere((m) => m.id == id));
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل ارسال نشد. حجم فایل و اتصال دفتر مشترک را بررسی کن.')));
+      try {
+        await _queueFileFailure(id: id, path: path, kind: kind, replyTo: replyId, caption: caption, createdAt: createdAt);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فایل در صف ذخیره شد و پس از اتصال دوباره ارسال می‌شود.')));
+      } catch (_) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ارسال ناموفق بود و ذخیرهٔ فایل برای تلاش مجدد هم ممکن نشد.')));
       }
     } finally {
-      // Only delete files created by this screen (for example recorded audio).
-      // Gallery and file-picker sources belong to the user and must be preserved.
+      // Recorded temp files may be removed once a persistent outbox copy exists.
       if (deleteLocalAfterSend) {
-        try {
-          final f = File(path);
-          if (await f.exists()) await f.delete();
-        } catch (_) {}
+        final queued = _outbox.any((item) => item['id']?.toString() == id);
+        if (!queued) {
+          try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
+        } else {
+          try { final f = File(path); if (f.existsSync() && !f.path.contains('/BigSisterOutbox/')) await f.delete(); } catch (_) {}
+        }
       }
+    }
+  }
+
+  Future<void> _resendMessage(ChatMessage message) async {
+    if (_outbox.any((item) => item['id']?.toString() == message.id)) {
+      await _retryQueuedMessage(message.id);
+      return;
+    }
+    if (message.hasAttachment) {
+      try {
+        final bytes = await cloud.downloadMediaBytes(message.attachmentId!);
+        final dir = await getTemporaryDirectory();
+        final raw = (message.attachmentName?.trim().isNotEmpty == true ? message.attachmentName!.trim() : 'resend_${message.id}.bin').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        final file = File('${dir.path}/resend_${DateTime.now().microsecondsSinceEpoch}_$raw');
+        await file.writeAsBytes(bytes, flush: true);
+        await _sendFile(file.path, message.type, deleteLocalAfterSend: true, caption: message.body);
+      } catch (_) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('دانلود فایل برای ارسال مجدد ناموفق بود.')));
+      }
+      return;
+    }
+    if (message.body.trim().isNotEmpty) await _sendTextBody(message.body, replyId: message.replyTo);
+  }
+
+  Future<void> _editMessage(ChatMessage message) async {
+    final controller = TextEditingController(text: message.body);
+    final changed = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('ویرایش پیام'),
+          content: TextField(controller: controller, autofocus: true, minLines: 1, maxLines: 6, maxLength: 20000),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('لغو')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()), child: const Text('ذخیره')),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (changed == null || changed.isEmpty) return;
+    try {
+      _replaceMessage(await cloud.editMessage(message.id, changed));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ویرایش ممکن نشد؛ فقط پیام‌های خودت تا ۱۵ دقیقه قابل ویرایش‌اند.')));
+    }
+  }
+
+  Future<void> _toggleHeartReaction(ChatMessage message) async {
+    try {
+      final response = await cloud.react(message.id, _myReaction(message) == '❤️' ? '' : '❤️');
+      final old = _messageById(message.id) ?? message;
+      _replaceMessage(ChatMessage(
+        id: old.id, senderId: old.senderId, type: old.type, body: old.body,
+        createdAt: old.createdAt, attachmentId: old.attachmentId,
+        attachmentName: old.attachmentName, replyTo: old.replyTo,
+        reaction: response['reaction']?.toString(),
+        reactions: _parseReactionMap(response['reactions'], fallback: old.reactions),
+        deliveredAt: old.deliveredAt, readAt: old.readAt, isPinned: old.isPinned,
+        editedAt: old.editedAt, localStatus: old.localStatus,
+      ));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ثبت واکنش ممکن نشد.')));
+    }
+  }
+
+  Future<void> _chooseReaction(ChatMessage message) async {
+    const emojis = <String>['❤️', '😂', '😍', '👍', '👎', '😢', '😮', '🙏', '🔥', '🎉', '🥰', '💯', '😡', '🤗', '👏', '✅'];
+    final reaction = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 12,
+            children: emojis.map((emoji) => InkWell(
+              onTap: () => Navigator.pop(sheetContext, emoji),
+              borderRadius: BorderRadius.circular(18),
+              child: Padding(padding: const EdgeInsets.all(7), child: Text(emoji, style: const TextStyle(fontSize: 30))),
+            )).toList(),
+          ),
+        ),
+      ),
+    );
+    if (reaction == null) return;
+    try {
+      final response = await cloud.react(message.id, _myReaction(message) == reaction ? '' : reaction);
+      final old = _messageById(message.id) ?? message;
+      _replaceMessage(ChatMessage(
+        id: old.id, senderId: old.senderId, type: old.type, body: old.body,
+        createdAt: old.createdAt, attachmentId: old.attachmentId,
+        attachmentName: old.attachmentName, replyTo: old.replyTo,
+        reaction: response['reaction']?.toString(),
+        reactions: _parseReactionMap(response['reactions'], fallback: old.reactions),
+        deliveredAt: old.deliveredAt, readAt: old.readAt, isPinned: old.isPinned,
+        editedAt: old.editedAt, localStatus: old.localStatus,
+      ));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ثبت واکنش ممکن نشد.')));
+    }
+  }
+
+  Future<void> _togglePinned(ChatMessage message) async {
+    try {
+      _replaceMessage(await cloud.pinMessage(message.id, !message.isPinned));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message.isPinned ? 'سنجاق پیام برداشته شد.' : 'پیام برای هر دو نفر سنجاق شد.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سنجاق‌کردن پیام ناموفق بود.')));
     }
   }
 
@@ -396,11 +747,17 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     typingTimer?.cancel();
+    searchTimer?.cancel();
+    outboxRetryTimer?.cancel();
+    connectionSub?.cancel();
+    searchController.dispose();
     messageSub?.cancel();
     typingSub?.cancel();
     presenceSub?.cancel();
     statusSub?.cancel();
     deletedSub?.cancel();
+    callStateSub?.cancel();
+    if (CallService.instance.current.status == 'ringing' || CallService.instance.current.status == 'connecting' || CallService.instance.current.status == 'active') { unawaited(CallService.instance.endCall()); }
     composer.dispose();
     scroll.dispose();
     recorder.dispose();
@@ -445,12 +802,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   icon: const Icon(Icons.close_rounded),
                 )
               : null,
-          title: selecting
-              ? Text(
-                  '${selectedIds.length} پیام انتخاب شده',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+          title: searchMode
+              ? TextField(
+                  controller: searchController,
+                  autofocus: true,
+                  onChanged: _onSearchChanged,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(hintText: 'جست‌وجوی پیام و فایل…', border: InputBorder.none, hintStyle: TextStyle(color: Colors.white60)),
                 )
-              : Row(
+              : selecting
+                  ? Text('${selectedIds.length} پیام انتخاب شده', style: const TextStyle(fontWeight: FontWeight.w900))
+                  : Row(
                   children: [
                     Container(
                       width: 42,
@@ -473,6 +835,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
           actions: [
+            if (!selecting && !searchMode)
+              IconButton(tooltip: 'جست‌وجوی پیام و فایل', onPressed: () => setState(() => searchMode = true), icon: const Icon(Icons.search_rounded)),
+            if (searchMode)
+              IconButton(tooltip: 'بستن جست‌وجو', onPressed: () { searchTimer?.cancel(); searchController.clear(); setState(() { searchMode = false; searchResults.clear(); }); }, icon: const Icon(Icons.close_rounded)),
+            if (!selecting && !searchMode)
+              IconButton(tooltip: 'تاریخچه تماس‌ها', onPressed: _showCallHistory, icon: const Icon(Icons.history_rounded)),
+            if (!selecting && !searchMode)
+              IconButton(tooltip: 'تماس صوتی', onPressed: () => _startCall(video: false), icon: const Icon(Icons.call_rounded)),
+            if (!selecting && !searchMode)
+              IconButton(tooltip: 'تماس تصویری', onPressed: () => _startCall(video: true), icon: const Icon(Icons.videocam_rounded)),
             if (selecting)
               IconButton(
                 tooltip: 'حذف پیام‌های انتخاب‌شده',
@@ -483,24 +855,32 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         body: Column(
           children: [
+            if (!searchMode && messages.any((m) => m.isPinned))
+              Builder(builder: (context) {
+                final pinned = messages.lastWhere((m) => m.isPinned);
+                final title = pinned.body.trim().isNotEmpty ? pinned.body.trim() : (pinned.attachmentName ?? 'پیام مهم سنجاق‌شده');
+                return InkWell(
+                  onTap: () { setState(() { searchMode = true; searchController.text = title; }); _onSearchChanged(title); },
+                  child: Container(width: double.infinity, margin: const EdgeInsets.fromLTRB(12, 4, 12, 2), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9), decoration: BoxDecoration(color: c.primary.withValues(alpha: .10), borderRadius: BorderRadius.circular(12), border: Border.all(color: c.primary.withValues(alpha: .25))), child: Row(children: [Icon(Icons.push_pin_rounded, color: c.primary, size: 18), const SizedBox(width: 8), Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis)), const Icon(Icons.chevron_left_rounded)])),
+                );
+              }),
             Expanded(
               child: loading
                   ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      controller: scroll,
-                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
-                      itemCount: messages.length,
-                      itemBuilder: (_, i) {
-                        final message = messages[i];
-                        final showDay = i == 0 || !_sameDay(message.createdAt, messages[i - 1].createdAt);
-                        return Column(
-                          children: [
-                            if (showDay) _daySeparator(message.createdAt, c.primary),
-                            _bubble(message, c),
-                          ],
-                        );
-                      },
-                    ),
+                  : Builder(builder: (context) {
+                      final visibleMessages = searchMode && searchController.text.trim().isNotEmpty ? searchResults : messages;
+                      if (searchMode && searchController.text.trim().isNotEmpty && visibleMessages.isEmpty) return const Center(child: Text('پیامی یا فایلی پیدا نشد.'));
+                      return ListView.builder(
+                        controller: scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+                        itemCount: visibleMessages.length,
+                        itemBuilder: (_, i) {
+                          final message = visibleMessages[i];
+                          final showDay = !searchMode && (i == 0 || !_sameDay(message.createdAt, visibleMessages[i - 1].createdAt));
+                          return Column(children: [if (showDay) _daySeparator(message.createdAt, c.primary), _bubble(message, c)]);
+                        },
+                      );
+                    }),
             ),
             _composer(c),
           ],
@@ -546,12 +926,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: GestureDetector(
         onLongPress: () => _showMessageActions(message),
         onTap: selecting ? () => _toggleSelection(message) : null,
-        onDoubleTap: selecting
-            ? null
-            : () => cloud.react(
-                  message.id,
-                  message.reaction == '❤️' ? '' : '❤️',
-                ),
+        onDoubleTap: selecting ? null : () => _toggleHeartReaction(message),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           decoration: selected
@@ -662,6 +1037,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (message.isPinned) const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.push_pin_rounded, size: 12, color: Colors.amberAccent)),
                   Text(
                     _time(message.createdAt),
                     style: const TextStyle(fontSize: 10, color: Colors.white54),
@@ -678,18 +1054,62 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: message.isRead ? c.primary : Colors.white54,
                     ),
                   ],
-                  if (message.reaction != null && message.reaction!.isNotEmpty) ...[
+                  if (message.editedAt != null) ...[
                     const SizedBox(width: 5),
-                    Text(message.reaction!, style: const TextStyle(fontSize: 13)),
+                    const Text('ویرایش‌شده', style: TextStyle(fontSize: 9, color: Colors.white54)),
+                  ],
+                  if (message.localStatus != null) ...[
+                    const SizedBox(width: 5),
+                    Text(message.localStatus == 'failed' ? 'ارسال ناموفق' : 'در صف ارسال', style: const TextStyle(fontSize: 9, color: Colors.orangeAccent)),
+                    IconButton(tooltip: 'تلاش مجدد ارسال', visualDensity: VisualDensity.compact, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24), onPressed: () => _retryQueuedMessage(message.id), icon: const Icon(Icons.sync_rounded, size: 15, color: Colors.orangeAccent)),
                   ],
                 ],
               ),
+              if (message.reactions.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Wrap(spacing: 4, runSpacing: 4, children: _reactionSummary(message)),
+              ],
             ],
           ),
         ),
       ),
       ),
     );
+  }
+
+  Map<String, String> _parseReactionMap(Object? raw, {Map<String, String> fallback = const <String, String>{}}) {
+    if (raw is! Map) return fallback;
+    final result = <String, String>{};
+    for (final entry in raw.entries) {
+      final emoji = entry.value?.toString() ?? '';
+      if (emoji.isNotEmpty) result[entry.key.toString()] = emoji;
+    }
+    return result;
+  }
+
+  String? _myReaction(ChatMessage message) {
+    final id = myDeviceId;
+    if (id != null && message.reactions.containsKey(id)) return message.reactions[id];
+    return null;
+  }
+
+  List<Widget> _reactionSummary(ChatMessage message) {
+    final counts = <String, int>{};
+    for (final emoji in message.reactions.values) {
+      counts[emoji] = (counts[emoji] ?? 0) + 1;
+    }
+    return counts.entries.map((entry) {
+      final selected = _myReaction(message) == entry.key;
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: selected ? Theme.of(context).colorScheme.primary.withValues(alpha: .18) : Colors.white.withValues(alpha: .06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: selected ? Theme.of(context).colorScheme.primary.withValues(alpha: .55) : Colors.white.withValues(alpha: .08)),
+        ),
+        child: Text('${entry.key}${entry.value > 1 ? ' ${entry.value}' : ''}', style: const TextStyle(fontSize: 12)),
+      );
+    }).toList();
   }
 
   ChatMessage? _messageById(String id) {
@@ -755,41 +1175,36 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showMessageActions(ChatMessage message) async {
+    final mine = message.senderId == myDeviceId;
+    final editable = mine && DateTime.now().difference(message.createdAt).inMinutes < 15 && message.body.trim().isNotEmpty;
     final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.reply_rounded),
-              title: const Text('پاسخ به پیام'),
-              onTap: () => Navigator.pop(sheetContext, 'reply'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.checklist_rounded),
-              title: const Text('انتخاب پیام'),
-              onTap: () => Navigator.pop(sheetContext, 'select'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.favorite_rounded),
-              title: const Text('واکنش ❤️'),
-              onTap: () => Navigator.pop(sheetContext, 'react'),
-            ),
-          ],
-        ),
+        child: Wrap(children: [
+          ListTile(leading: const Icon(Icons.reply_rounded), title: const Text('پاسخ به پیام'), onTap: () => Navigator.pop(sheetContext, 'reply')),
+          ListTile(leading: const Icon(Icons.emoji_emotions_outlined), title: const Text('واکنش ایموجی'), onTap: () => Navigator.pop(sheetContext, 'react')),
+          ListTile(leading: Icon(message.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded), title: Text(message.isPinned ? 'برداشتن سنجاق' : 'سنجاق برای هر دو نفر'), onTap: () => Navigator.pop(sheetContext, 'pin')),
+          if (editable) ListTile(leading: const Icon(Icons.edit_rounded), title: const Text('ویرایش پیام'), onTap: () => Navigator.pop(sheetContext, 'edit')),
+          ListTile(leading: const Icon(Icons.forward_rounded), title: const Text('ارسال مجدد پیام یا فایل'), onTap: () => Navigator.pop(sheetContext, 'resend')),
+          ListTile(leading: const Icon(Icons.checklist_rounded), title: const Text('انتخاب پیام'), onTap: () => Navigator.pop(sheetContext, 'select')),
+        ]),
       ),
     );
-    if (!mounted) return;
+    if (!mounted || choice == null) return;
     if (choice == 'reply') {
       setState(() => replyingTo = message);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        FocusScope.of(context).unfocus();
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => FocusScope.of(context).unfocus());
     } else if (choice == 'select') {
       _toggleSelection(message);
     } else if (choice == 'react') {
-      await cloud.react(message.id, message.reaction == '❤️' ? '' : '❤️');
+      await _chooseReaction(message);
+    } else if (choice == 'pin') {
+      await _togglePinned(message);
+    } else if (choice == 'edit') {
+      await _editMessage(message);
+    } else if (choice == 'resend') {
+      await _resendMessage(message);
     }
   }
 
@@ -821,6 +1236,26 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     }
+  }
+
+  Future<void> _startCall({required bool video}) async {
+    try {
+      await CallService.instance.startOutgoing(video: video);
+      if (mounted) _showCallDialog();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('شروع تماس ممکن نشد: $e')));
+    }
+  }
+
+  Future<void> _showCallDialog() async {
+    if (callDialogOpen || !mounted) return;
+    callDialogOpen = true;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const _ChatCallDialog(),
+    );
+    callDialogOpen = false;
   }
 
   String _time(DateTime time) => PersianDate.time(time);
@@ -1055,6 +1490,123 @@ class _RemoteVideoBubbleState extends State<_RemoteVideoBubble> {
             ),
         ],
       ),
+    );
+  }
+}
+
+
+class _ChatCallDialog extends StatefulWidget {
+  const _ChatCallDialog();
+
+  @override
+  State<_ChatCallDialog> createState() => _ChatCallDialogState();
+}
+
+class _ChatCallDialogState extends State<_ChatCallDialog> {
+  Timer? _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() {}); });
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    super.dispose();
+  }
+
+  String _duration(Duration d) => PersianDate.digits('${d.inMinutes.toString().padLeft(2, '0')}:${(d.inSeconds % 60).toString().padLeft(2, '0')}');
+
+  @override
+  Widget build(BuildContext context) {
+    final service = CallService.instance;
+    return StreamBuilder<CallSession>(
+      stream: service.states,
+      initialData: service.current,
+      builder: (context, snapshot) {
+        final state = snapshot.data ?? service.current;
+        final incoming = state.status == 'ringing' && !state.outgoing;
+        final video = state.video;
+        final ongoing = state.status == 'active' || state.status == 'connecting';
+        final title = incoming
+            ? (video ? 'تماس تصویری ورودی' : 'تماس صوتی ورودی')
+            : state.status == 'active'
+                ? 'تماس برقرار است'
+                : state.status == 'ended'
+                    ? 'تماس پایان یافت'
+                    : (video ? 'در حال برقراری تماس تصویری…' : 'در حال برقراری تماس صوتی…');
+        return Dialog(
+          insetPadding: const EdgeInsets.all(18),
+          child: SizedBox(
+            width: 460,
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (video && !incoming && service.remoteRenderer.srcObject != null)
+                    ClipRRect(borderRadius: BorderRadius.circular(16), child: SizedBox(height: 250, child: RTCVideoView(service.remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)))
+                  else
+                    const CircleAvatar(radius: 42, child: Icon(Icons.person_rounded, size: 46)),
+                  const SizedBox(height: 14),
+                  Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                  if (state.status == 'active') Padding(padding: const EdgeInsets.only(top: 6), child: Text(_duration(service.activeDuration), style: const TextStyle(fontWeight: FontWeight.w700))),
+                  if (state.error != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(state.error!, textAlign: TextAlign.center)),
+                  if (video && service.localRenderer.srcObject != null) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(height: 78, child: RTCVideoView(service.localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),
+                  ],
+                  const SizedBox(height: 18),
+                  if (ongoing && !incoming)
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        IconButton.filledTonal(tooltip: state.muted ? 'روشن‌کردن میکروفون' : 'بی‌صداکردن میکروفون', onPressed: () => service.toggleMicrophone(), icon: Icon(state.muted ? Icons.mic_off_rounded : Icons.mic_rounded)),
+                        if (video) IconButton.filledTonal(tooltip: state.cameraEnabled ? 'خاموش‌کردن دوربین' : 'روشن‌کردن دوربین', onPressed: () => service.toggleCamera(), icon: Icon(state.cameraEnabled ? Icons.videocam_rounded : Icons.videocam_off_rounded)),
+                        if (video) IconButton.filledTonal(tooltip: 'تعویض دوربین', onPressed: () => service.switchCamera(), icon: const Icon(Icons.cameraswitch_rounded)),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            try {
+                              await service.toggleSpeaker();
+                            } catch (_) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('تغییر خروجی صدا ممکن نشد؛ مجوز و وضعیت تماس را بررسی کن.')),
+                                );
+                              }
+                            }
+                          },
+                          icon: Icon(state.speakerOn ? Icons.volume_up_rounded : Icons.hearing_rounded),
+                          label: Text(state.speakerOn ? 'اسپیکر روشن' : 'اسپیکر خاموش'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    children: [
+                      if (incoming)
+                        FilledButton.icon(onPressed: () async { try { await service.acceptIncoming(); } catch (_) { await service.endCall(decline: true); } }, icon: const Icon(Icons.call_rounded), label: const Text('پاسخ')),
+                      if (state.status != 'ended')
+                        FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.redAccent), onPressed: () async { await service.endCall(decline: incoming); if (context.mounted) Navigator.of(context).pop(); }, icon: const Icon(Icons.call_end_rounded), label: Text(incoming ? 'رد تماس' : 'پایان تماس'))
+                      else
+                        FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('بستن')),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
