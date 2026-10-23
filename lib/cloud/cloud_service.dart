@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -34,8 +35,13 @@ class CloudService {
   final StreamController<Map<String, dynamic>> _messageStatus = StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _deletedMessages = StreamController<String>.broadcast();
   final StreamController<Map<String, dynamic>> _callSignals = StreamController<Map<String, dynamic>>.broadcast();
+  final Map<String, Completer<Map<String, dynamic>?>> _cloudflareAcks = <String, Completer<Map<String, dynamic>?>>{};
   final StreamController<bool> _connectionChanged = StreamController<bool>.broadcast();
   IO.Socket? _socket;
+  WebSocket? _cloudflareSocket;
+  StreamSubscription<dynamic>? _cloudflareSubscription;
+  Timer? _cloudflarePingTimer;
+  Timer? _cloudflareReconnectTimer;
   Dio? _dio;
   bool _initialized = false;
   bool _syncing = false;
@@ -200,6 +206,17 @@ class CloudService {
   }
 
   Future<void> disconnect() async {
+    _cloudflareReconnectTimer?.cancel();
+    _cloudflareReconnectTimer = null;
+    _cloudflarePingTimer?.cancel();
+    _cloudflarePingTimer = null;
+    await _cloudflareSubscription?.cancel();
+    _cloudflareSubscription = null;
+    final cloudflareSocket = _cloudflareSocket;
+    _cloudflareSocket = null;
+    if (cloudflareSocket != null) { try { await cloudflareSocket.close(WebSocketStatus.normalClosure); } catch (_) {} }
+    for (final completer in _cloudflareAcks.values) { if (!completer.isCompleted) completer.complete(null); }
+    _cloudflareAcks.clear();
     _socket?.dispose();
     _socket = null;
     _online = false;
@@ -217,10 +234,46 @@ class CloudService {
     await _secure.delete(key: _deviceIdKey);
   }
 
+  Future<bool> _isCloudflareBackend() async {
+    final url = Uri.tryParse(normalizedBaseUrl);
+    if (url == null || url.host.isEmpty) return false;
+    final host = url.host.toLowerCase();
+    if (host.endsWith('up.railway.app')) return false;
+    if (host.endsWith('.workers.dev') || host.endsWith('.pages.dev')) return true;
+    // Support Cloudflare Workers behind a custom domain, too. A short timeout
+    // keeps the existing Socket.IO backend path usable if its health endpoint is down.
+    try {
+      final response = await _makeDio(normalizedBaseUrl)
+          .get('/api/health')
+          .timeout(const Duration(seconds: 2));
+      final data = response.data;
+      return data is Map && data['provider']?.toString() == 'cloudflare-workers';
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _connectSocket() async {
     if (!configured) return;
     final t = await token;
     if (t == null || t.isEmpty) return;
+    if (await _isCloudflareBackend()) {
+      _socket?.dispose();
+      _socket = null;
+      await _connectCloudflareSocket(t);
+      return;
+    }
+    _cloudflareReconnectTimer?.cancel();
+    _cloudflareReconnectTimer = null;
+    _cloudflarePingTimer?.cancel();
+    _cloudflarePingTimer = null;
+    await _cloudflareSubscription?.cancel();
+    _cloudflareSubscription = null;
+    final priorCloudflareSocket = _cloudflareSocket;
+    _cloudflareSocket = null;
+    if (priorCloudflareSocket != null) {
+      try { await priorCloudflareSocket.close(WebSocketStatus.normalClosure); } catch (_) {}
+    }
     _socket?.dispose();
     _socket = IO.io(
       normalizedBaseUrl,
@@ -314,6 +367,151 @@ class CloudService {
         }
       });
     _socket!.connect();
+  }
+
+  Future<void> _connectCloudflareSocket(String accessToken) async {
+    final current = _cloudflareSocket;
+    if (current != null && current.readyState == WebSocket.open) return;
+    _cloudflareReconnectTimer?.cancel();
+    _cloudflareReconnectTimer = null;
+    try {
+      final base = Uri.parse(normalizedBaseUrl);
+      final socketUri = base.replace(
+        scheme: base.scheme == 'https' ? 'wss' : 'ws',
+        path: '/api/realtime',
+        query: null,
+        fragment: null,
+      );
+      final socket = await WebSocket.connect(
+        socketUri.toString(),
+        headers: {HttpHeaders.authorizationHeader: 'Bearer $accessToken'},
+      ).timeout(const Duration(seconds: 15));
+      if (!configured) {
+        await socket.close(WebSocketStatus.normalClosure);
+        return;
+      }
+      _cloudflareSocket = socket;
+      _online = true;
+      _connectionChanged.add(true);
+      if (_hasConnectedOnce) unawaited(_catchUpMessages());
+      _hasConnectedOnce = true;
+      _cloudflareSubscription = socket.listen(
+        (dynamic frame) {
+          try {
+            final decoded = jsonDecode(frame is String ? frame : utf8.decode(frame as List<int>));
+            if (decoded is! Map) return;
+            final event = decoded['event']?.toString() ?? '';
+            final ackId = decoded['ackId']?.toString();
+            if (event == 'ack' && ackId != null) {
+              final pending = _cloudflareAcks.remove(ackId);
+              final data = decoded['data'];
+              if (pending != null && !pending.isCompleted) {
+                pending.complete(data is Map ? Map<String, dynamic>.from(data) : null);
+              }
+              return;
+            }
+            _handleCloudflareEvent(event, decoded['data']);
+          } catch (_) {}
+        },
+        onError: (Object _) => _handleCloudflareDisconnect(socket),
+        onDone: () => _handleCloudflareDisconnect(socket),
+        cancelOnError: true,
+      );
+      _cloudflarePingTimer?.cancel();
+      _cloudflarePingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+        if (socket.readyState == WebSocket.open) {
+          try { socket.add(jsonEncode({'event': 'ping', 'data': {}})); } catch (_) {}
+        }
+      });
+    } catch (_) {
+      _online = false;
+      _connectionChanged.add(false);
+      _scheduleCloudflareReconnect();
+    }
+  }
+
+  void _handleCloudflareDisconnect(WebSocket socket) {
+    if (!identical(_cloudflareSocket, socket)) return;
+    _cloudflareSocket = null;
+    _cloudflarePingTimer?.cancel();
+    _cloudflarePingTimer = null;
+    _online = false;
+    _connectionChanged.add(false);
+    for (final completer in _cloudflareAcks.values) {
+      if (!completer.isCompleted) completer.complete(null);
+    }
+    _cloudflareAcks.clear();
+    _scheduleCloudflareReconnect();
+  }
+
+  void _scheduleCloudflareReconnect() {
+    if (!configured || _cloudflareReconnectTimer != null) return;
+    _cloudflareReconnectTimer = Timer(const Duration(seconds: 3), () {
+      _cloudflareReconnectTimer = null;
+      if (configured) unawaited(_connectSocket());
+    });
+  }
+
+  void _handleCloudflareEvent(String event, dynamic data) {
+    if (event == 'call:signal') {
+      if (data is Map) _callSignals.add(Map<String, dynamic>.from(data));
+    } else if (event == 'content:changed' || event == 'pair:completed') {
+      _contentChanged.add(null);
+    } else if (event == 'chat:message') {
+      try {
+        if (data is Map) {
+          final message = ChatMessage.fromJson(Map<String, dynamic>.from(data));
+          final isNew = _knownChatMessageIds.add(message.id);
+          _messages.add(message);
+          if (isNew && (_cachedDeviceId == null || message.senderId != _cachedDeviceId)) {
+            unawaited(NotificationService.instance.showIncomingChat(message));
+          }
+        }
+      } catch (_) {}
+    } else if (event == 'letter:new') {
+      try {
+        if (data is Map) {
+          final letter = CloudLetter.fromJson(Map<String, dynamic>.from(data));
+          _letters.add(letter);
+          if (_cachedDeviceId == null || letter.senderId != _cachedDeviceId) {
+            unawaited(NotificationService.instance.showIncomingLetter(id: letter.id, title: letter.title));
+          }
+        }
+      } catch (_) {}
+    } else if (event == 'chat:read') {
+      if (data is Map) _messageStatus.add({'type': 'read', ...Map<String, dynamic>.from(data)});
+    } else if (event == 'chat:delivered') {
+      if (data is Map) _messageStatus.add({'type': 'delivered', ...Map<String, dynamic>.from(data)});
+    } else if (event == 'chat:reaction') {
+      if (data is Map) _messageStatus.add({'type': 'reaction', ...Map<String, dynamic>.from(data)});
+    } else if (event == 'chat:edited') {
+      if (data is Map) _messageStatus.add({'eventType': 'edit', ...Map<String, dynamic>.from(data)});
+    } else if (event == 'chat:pinned') {
+      if (data is Map) _messageStatus.add({'eventType': 'pin', ...Map<String, dynamic>.from(data)});
+    } else if (event == 'chat:deleted') {
+      final id = data is Map ? data['id']?.toString() : data?.toString();
+      if (id != null && id.isNotEmpty) _deletedMessages.add(id);
+    } else if (event == 'typing') {
+      if (data is Map) _typing.add(data['typing'] == true);
+    } else if (event == 'presence') {
+      if (data is Map) _presence.add(Map<String, dynamic>.from(data));
+    } else if (event == 'presence:state') {
+      if (data is Map) {
+        final devices = (data['deviceIds'] as List? ?? const []).whereType<String>();
+        for (final id in devices) {
+          _presence.add({'deviceId': id, 'online': true, 'at': DateTime.now().toUtc().toIso8601String()});
+        }
+      }
+    }
+  }
+
+  void _sendRealtime(String event, dynamic data) {
+    final cf = _cloudflareSocket;
+    if (cf != null && cf.readyState == WebSocket.open) {
+      try { cf.add(jsonEncode({'event': event, 'data': data})); } catch (_) {}
+      return;
+    }
+    _socket?.emit(event, data);
   }
 
   Future<String> _uploadNoteMedia(File file, String kind) async {
@@ -449,6 +647,13 @@ class CloudService {
       if (!_online) {
         _online = true;
         _connectionChanged.add(true);
+      }
+      // A fresh Cloudflare D1 database has no snapshot yet. Do not apply its
+      // placeholder empty payload over this device's local notes; startup will
+      // upload local content immediately after this pull. Existing Railway APIs
+      // do not send hasSnapshot, so their behavior remains unchanged.
+      if (response.data is Map && response.data['hasSnapshot'] == false) {
+        return {};
       }
       final payload = Map<String, dynamic>.from(response.data['payload'] as Map);
       await storage.applyCloudJson(payload, resolveMedia: _downloadNoteMedia);
@@ -702,7 +907,11 @@ class CloudService {
     final t = await token;
     if (t == null) return;
     await _dio!.patch('/api/chat/messages/$id/read', options: Options(headers: {'Authorization': 'Bearer $t'}));
-    _socket?.emit('message:read', id);
+    if (_cloudflareSocket != null) {
+      _sendRealtime('message:read', {'id': id});
+    } else {
+      _socket?.emit('message:read', id);
+    }
   }
 
   Future<void> deleteMessage(String id) async {
@@ -729,11 +938,11 @@ class CloudService {
 
   Future<void> sendCallSignal(Map<String, dynamic> payload) async {
     await init();
-    if (!_online || _socket == null) throw StateError('سرور چت برای تماس متصل نیست.');
-    _socket!.emit('call:signal', payload);
+    if (!_online || (_socket == null && _cloudflareSocket == null)) throw StateError('سرور چت برای تماس متصل نیست.');
+    _sendRealtime('call:signal', payload);
   }
 
-  void setTyping(bool value) => _socket?.emit('typing', value);
+  void setTyping(bool value) => _sendRealtime('typing', value);
 
   void _ensureOk(Response<dynamic> response) {
     if (response.statusCode == null || response.statusCode! >= 300) {
@@ -744,6 +953,11 @@ class CloudService {
   }
 
   Future<void> dispose() async {
+    _cloudflareReconnectTimer?.cancel();
+    _cloudflarePingTimer?.cancel();
+    await _cloudflareSubscription?.cancel();
+    try { await _cloudflareSocket?.close(WebSocketStatus.normalClosure); } catch (_) {}
+    _cloudflareSocket = null;
     _socket?.dispose();
     await _contentChanged.close();
     await _messages.close();

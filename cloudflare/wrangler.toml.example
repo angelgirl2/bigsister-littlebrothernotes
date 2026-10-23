@@ -1,0 +1,25 @@
+name = "big-sister-sync-cloudflare"
+main = "src/index.js"
+compatibility_date = "2026-10-24"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "big-sister-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "REALTIME"
+class_name = "RealtimeRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeRoom"]
+
+[vars]
+LITTLE_BROTHER_LABEL = "داداش کوچیکه"
+BIG_SISTER_LABEL = "آبجی بزرگ"
+ROOM_CODE_TTL_HOURS = "24"
+MAX_UPLOAD_MB = "25"
+CORS_ORIGIN = "*"

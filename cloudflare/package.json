@@ -1,0 +1,14 @@
+{
+  "name": "big-sister-sync-cloudflare",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:remote": "wrangler d1 migrations apply big-sister-db --remote"
+  },
+  "devDependencies": {
+    "wrangler": "4.136.3"
+  }
+}
