@@ -53,3 +53,9 @@ flutter pub get
 flutter analyze
 flutter build apk --release --dart-define=BIG_SISTER_API_URL=https://bigsister-littlebrothernotes.up.railway.app
 ```
+
+## گزینهٔ جدید: Cloudflare بدون حذف Railway
+
+مسیر دوم در پوشهٔ `cloudflare/` اضافه شده است. این مسیر از Workers + D1 + Durable Objects استفاده می‌کند و APIها و realtime را برای برنامهٔ Flutter فراهم می‌کند. Railway و سرور Node/PostgreSQL قبلی همچنان در پروژه هستند و همچنان پیش‌فرض باقی می‌مانند مگر URL را در تنظیمات برنامه یا GitHub Actions Variable با نام `BIG_SISTER_API_URL` تغییر بدهی.
+
+برای راه‌اندازی و Deploy خودکار از GitHub، دستورالعمل کامل فارسی را در [`cloudflare/README_FA.md`](cloudflare/README_FA.md) ببین. قبل از استفاده از URL جدید، حتماً هشدار مهاجرت داده در آن فایل را بخوان: دیتابیس جدید Cloudflare داده‌های تاریخی Railway را خودکار کپی نمی‌کند، و دیتابیس/رسانه‌های Railway دست‌نخورده باقی می‌مانند.
