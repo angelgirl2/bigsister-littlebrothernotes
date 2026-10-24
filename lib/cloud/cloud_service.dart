@@ -28,6 +28,7 @@ class CloudService {
 
   final FlutterSecureStorage _secure = const FlutterSecureStorage();
   final StreamController<void> _contentChanged = StreamController<void>.broadcast();
+  final StreamController<String?> _syncErrorChanges = StreamController<String?>.broadcast();
   final StreamController<ChatMessage> _messages = StreamController<ChatMessage>.broadcast();
   final StreamController<CloudLetter> _letters = StreamController<CloudLetter>.broadcast();
   final StreamController<bool> _typing = StreamController<bool>.broadcast();
@@ -60,7 +61,39 @@ class CloudService {
   Stream<String> get deletedMessages => _deletedMessages.stream;
   Stream<Map<String, dynamic>> get callSignals => _callSignals.stream;
   Stream<bool> get connectionChanges => _connectionChanged.stream;
+  Stream<String?> get syncErrorChanges => _syncErrorChanges.stream;
   bool get online => _online;
+  String? _lastSyncError;
+  String? get lastSyncError => _lastSyncError;
+
+  void _setSyncError(String? message) {
+    if (_lastSyncError == message) return;
+    _lastSyncError = message;
+    _syncErrorChanges.add(message);
+  }
+
+  String _friendlySyncError(Object error) {
+    var code = error.toString();
+    if (error is StateError) code = error.message.toString();
+    if (error is DioException) {
+      if (error.response?.statusCode == 413) code = 'file_too_large';
+      final data = error.response?.data;
+      if (data is Map && data['error'] != null) code = data['error'].toString();
+    }
+    if (code.contains('local_media_missing')) {
+      return 'یک عکس یا فایل صوتی در این گوشی پیدا نشد؛ برای حفظ همهٔ خاطره‌ها، فایل اصلی را دوباره انتخاب کن و همگام‌سازی را تکرار کن.';
+    }
+    if (code.contains('file_too_large')) {
+      return 'فایل از سقف فعلی ۲۵ مگابایت بزرگ‌تر است؛ فایل کوچک‌تری انتخاب کن یا اندازهٔ مجاز را در سرور افزایش بده.';
+    }
+    if (code.contains('cloud_media_download_failed')) {
+      return 'دریافت یکی از عکس‌ها یا فایل‌های مشترک ناموفق شد؛ اتصال اینترنت و فضای Cloudflare را بررسی کن و دوباره همگام‌سازی کن.';
+    }
+    if (code.contains('media_upload_failed') || code.contains('database_unavailable') || code.contains('sync_failed')) {
+      return 'ذخیرهٔ ابری کامل نشد؛ سهمیه و فضای دیتابیس Cloudflare را بررسی کن. نسخهٔ محلی این گوشی فعلاً باقی است.';
+    }
+    return 'همگام‌سازی کامل نشد؛ اتصال اینترنت و فضای ذخیره‌سازی Cloudflare را بررسی کن. نسخهٔ محلی این گوشی باقی است.';
+  }
 
   String? _baseUrl;
   String? get baseUrl => _baseUrl;
@@ -548,7 +581,7 @@ class CloudService {
       final cached = cache[path];
       if (cached != null) return cached;
       final file = File(path);
-      if (!await file.exists()) return path;
+      if (!await file.exists()) throw StateError('local_media_missing');
       final remoteRef = await _uploadNoteMedia(file, kind);
       cache[path] = remoteRef;
       await storage.rememberCloudMediaRef(path, remoteRef);
@@ -579,7 +612,8 @@ class CloudService {
 
   Future<List<int>?> _downloadNoteMedia(String remoteRef) async {
     final t = await token;
-    if (t == null || t.isEmpty || !remoteRef.startsWith('cloud-media://')) return null;
+    if (t == null || t.isEmpty) throw StateError('cloud_media_download_failed');
+    if (!remoteRef.startsWith('cloud-media://')) return null;
     final body = remoteRef.substring('cloud-media://'.length);
     final id = body.split('/').first;
     if (id.isEmpty) return null;
@@ -592,9 +626,11 @@ class CloudService {
         ),
       );
       _ensureOk(response);
-      return response.data;
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) throw StateError('cloud_media_download_failed');
+      return bytes;
     } catch (_) {
-      return null;
+      throw StateError('cloud_media_download_failed');
     }
   }
 
@@ -621,8 +657,10 @@ class CloudService {
       }
       final payload = Map<String, dynamic>.from(response.data['payload'] as Map);
       await storage.applyCloudJson(payload, resolveMedia: _downloadNoteMedia);
+      _setSyncError(null);
       return payload;
-    } catch (_) {
+    } catch (error) {
+      _setSyncError(_friendlySyncError(error));
       return {};
     } finally {
       _syncing = false;
@@ -657,8 +695,10 @@ class CloudService {
       }
       final payload = Map<String, dynamic>.from(response.data['payload'] as Map);
       await storage.applyCloudJson(payload, resolveMedia: _downloadNoteMedia);
+      _setSyncError(null);
       return payload;
-    } catch (_) {
+    } catch (error) {
+      _setSyncError(_friendlySyncError(error));
       return {};
     } finally {
       _syncing = false;
