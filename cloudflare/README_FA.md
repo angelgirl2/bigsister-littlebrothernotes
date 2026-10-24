@@ -17,7 +17,7 @@ Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس 
 برای امنیت، اتصال به حساب Cloudflare و افزودن رمزها باید یک بار توسط صاحب حساب انجام شود؛ این گفتگو نباید محل ارسال توکن‌ها یا رمزها باشد. بعد از این تنظیم یک‌باره، انتشار Worker از GitHub Actions خودکار می‌شود.
 
 1. در Cloudflare به <https://dash.cloudflare.com/> برو، حساب درست را انتخاب کن و از صفحهٔ اصلی **Account ID** را کپی کن. لازم نیست D1 را دستی بسازی؛ workflow در صورت نبودن، پایگاه `big-sister-db` را ایجاد می‌کند و در صورت وجود آن را دوباره به کار می‌گیرد.
-2. در Cloudflare، **My Profile → API Tokens → Create Token** یک API Token محدود برای این deployment بساز. مجوزهای لازم: **Account Settings: Read**, **Workers Scripts: Edit**, **D1: Read** و **D1: Write**؛ این Worker از `workers.dev` استفاده می‌کند و نیازی به مجوز DNS یا دامنه ندارد. سطح دسترسی را تا حد ممکن به همان Account محدود کن.
+2. در Cloudflare، **My Profile → API Tokens → Create Token** یک API Token محدود برای این deployment بساز. مجوزهای لازم: **Account Settings: Read**, **Workers Scripts: Edit**, **D1: Read** و **D1: Write**؛ مجوز **Workers Scripts: Edit** برای ثبت خودکار زیردامنهٔ `workers.dev` هم استفاده می‌شود. این Worker از `workers.dev` استفاده می‌کند و نیازی به مجوز DNS یا دامنه ندارد. سطح دسترسی را تا حد ممکن به همان Account محدود کن.
 3. در GitHub مخزن را باز کن: **Settings → Secrets and variables → Actions → New repository secret**. موارد زیر را با نام دقیق ایجاد کن:
    - `CLOUDFLARE_API_TOKEN` — توکنی که همین الان در Cloudflare ساختی.
    - `CLOUDFLARE_ACCOUNT_ID` — شناسهٔ Account مرحلهٔ ۱.
@@ -25,7 +25,7 @@ Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس 
    - `SHARED_ROOM_KEY` — رشتهٔ تصادفی جداگانه با حداقل ۳۲ نویسه.
    - `LITTLE_BROTHER_PASSWORD` — همان رمز ورود برادر در برنامه.
    - `BIG_SISTER_PASSWORD` — همان رمز ورود خواهر در برنامه. این رمز باید با رمز برادر متفاوت باشد.
-4. ذخیره کن و در GitHub وارد **Actions → Deploy Big Sister API to Cloudflare → Run workflow → Run workflow** شو. workflow خودش D1 را می‌سازد/پیدا می‌کند، شناسه را در پیکربندی موقت Runner جایگزین می‌کند، migrationها را اجرا می‌کند، Worker و Durable Object را deploy می‌کند، secrets را تنظیم می‌کند و endpoint سلامت را آزمایش می‌کند. پس از آن، تغییر در کد، migrationها، `cloudflare/package.json`، `cloudflare/wrangler.toml` یا همین workflow در `main` یا `master` deployment خودکار را فعال می‌کند.
+4. workflow پیش از انتشار، با API رسمی Cloudflare زیردامنهٔ `workers.dev` را بررسی می‌کند و اگر وجود نداشته باشد تلاش می‌کند نامی را ایجاد کند. سپس D1 را می‌سازد/پیدا می‌کند، migrationها را اجرا می‌کند، Worker و Durable Object را deploy می‌کند، secrets را تنظیم می‌کند و `/api/health` را آزمایش می‌کند. اگر Cloudflare ثبت زیردامنه را به علت مجوز/محدودیت حساب رد کند، همان مرحله با خطای واضح متوقف می‌شود؛ در آن حالت یک بار صفحهٔ onboarding را باز کن: <https://dash.cloudflare.com/> → **Workers & Pages**. پس از تأیید موفق، workflow را دوباره اجرا کن. بعد از راه‌اندازی، تغییر در کد، migrationها، `cloudflare/package.json`، `cloudflare/wrangler.toml` یا همین workflow در `main` یا `master` deployment خودکار را فعال می‌کند.
 
 در انتها URL معمولاً به شکل `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev` است. آن را در لاگ اجرای موفق Actions پیدا کن یا از **Cloudflare Dashboard → Workers & Pages → big-sister-sync-cloudflare** بردار. تست سلامت:
 `https://<URL-نهایی>/api/health`
