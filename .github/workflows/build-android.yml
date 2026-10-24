@@ -23,8 +23,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      BIG_SISTER_API_URL: ${{ vars.BIG_SISTER_API_URL }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,6 +49,27 @@ jobs:
           printf 'flutter.sdk=%s\n' "$flutter_root" > android/local.properties
           printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" >> android/local.properties
 
+      - name: Resolve API URL for this APK
+        id: api-url
+        shell: bash
+        env:
+          CONFIGURED_API_URL: ${{ vars.BIG_SISTER_API_URL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api_url="${CONFIGURED_API_URL:-}"
+          if [[ -z "$api_url" ]]; then
+            if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+              echo "::error::Neither BIG_SISTER_API_URL nor CLOUDFLARE_ACCOUNT_ID is set. Follow cloudflare/README_FA.md."
+              exit 1
+            fi
+            account_prefix="${CLOUDFLARE_ACCOUNT_ID:0:8}"
+            worker_subdomain="bigsisternotes-angelgirl2-$account_prefix"
+            api_url="https://big-sister-sync-cloudflare.$worker_subdomain.workers.dev"
+          fi
+          echo "url=$api_url" >> "$GITHUB_OUTPUT"
+          echo "API URL is configured for this APK."
+
       - name: Resolve Flutter packages
         run: flutter pub get
 
@@ -58,11 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${BIG_SISTER_API_URL:-}" ]]; then
-            flutter build apk --release --dart-define="BIG_SISTER_API_URL=$BIG_SISTER_API_URL"
-          else
-            flutter build apk --release
-          fi
+          flutter build apk --release --dart-define="BIG_SISTER_API_URL=${{ steps.api-url.outputs.url }}"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
