@@ -53,6 +53,43 @@ jobs:
           fi
           echo "Required settings are present. Secret values are not printed."
 
+      - name: Ensure workers.dev subdomain is registered
+        id: workers-subdomain
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4"
+          endpoint="$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          current="$(curl --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$endpoint")"
+          subdomain="$(echo "$current" | jq -r 'if .success == true then (.result.subdomain // empty) else empty end')"
+
+          if [[ -n "$subdomain" ]]; then
+            echo "An account workers.dev subdomain is already registered; keeping it unchanged."
+          else
+            # Stable, account/repository-specific candidate. Existing subdomains are never replaced.
+            candidate="angelgirl2-bigsister-1383200784"
+            echo "No workers.dev subdomain found; attempting one-time registration."
+            created="$(curl --fail-with-body --silent --show-error -X PUT \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "{\"subdomain\":\"$candidate\"}" \
+              "$endpoint")" || {
+                echo "::error::Could not register a workers.dev subdomain. Ensure the Cloudflare API token has Workers Scripts: Edit permission and check Cloudflare dashboard onboarding."
+                exit 1
+              }
+            echo "$created" | jq -e '.success == true and (.result.subdomain // "" != "")' >/dev/null || {
+              echo "::error::Cloudflare rejected workers.dev subdomain registration. Check the API response in this job log (do not paste any tokens)."
+              exit 1
+            }
+            subdomain="$(echo "$created" | jq -r '.result.subdomain')"
+          fi
+
+          echo "subdomain=$subdomain" >> "$GITHUB_OUTPUT"
+          echo "workers.dev account subdomain is ready."
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
