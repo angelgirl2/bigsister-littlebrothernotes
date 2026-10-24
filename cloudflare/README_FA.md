@@ -8,7 +8,7 @@
 - D1: حساب اتاق مشترک، نشست‌ها، یادداشت‌های همگام‌شده، پیام‌ها، نامه‌ها، تاریخچه تماس و metadata رسانه‌ها.
 - D1 BLOB chunks: فایل‌ها در قطعات 200 KiB ذخیره می‌شوند. این روش از الزام به ساخت اشتراک R2 دوری می‌کند تا نصب اولیه بتواند روی سهمیهٔ رایگان بماند. در عوض، رسانه‌ها بخشی از سهمیه و فضای D1 را مصرف می‌کنند و دانلود یک فایل بزرگ چند پرس‌وجوی کوچک دارد. این روش برای بار سبک دو نفره طراحی شده است.
 - Durable Objects: WebSocket زنده برای پیام، حضور آنلاین، تایپ‌کردن و سیگنال‌دهی تماس.
-- GitHub Actions: مخزن GitHub منبع اصلی کد است؛ پس از افزودن یک‌بارهٔ Secrets لازم، هر Push به `main` یا `master` با تغییر `cloudflare/**` به‌طور خودکار D1 را ایجاد/بازیابی می‌کند، migrationها را اجرا می‌کند، Worker را منتشر می‌کند و health check می‌زند. اجرای دستی از **Actions → Deploy Big Sister API to Cloudflare → Run workflow** نیز ممکن است.
+- GitHub Actions: مخزن GitHub منبع اصلی کد است؛ پس از افزودن یک‌بارهٔ Secrets لازم، هر Push به `main` یا `master` با تغییر کد، migration یا تنظیمات استقرار Cloudflare به‌طور خودکار D1 را ایجاد/بازیابی می‌کند، migrationها را اجرا می‌کند، Worker را منتشر می‌کند و health check می‌زند. اجرای دستی از **Actions → Deploy Big Sister API to Cloudflare → Run workflow** نیز ممکن است.
 
 Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس ابری را نمی‌توان بدون قید و شرط برای همیشه رایگان تضمین کرد. عبور از سهمیه‌های روزانه می‌تواند درخواست‌های بیشتر را متوقف کند. این نسخه عمداً به R2 وابسته نیست، چون فعال کردن R2 وارد مرحلهٔ subscription/checkout می‌شود.
 
@@ -25,7 +25,7 @@ Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس 
    - `SHARED_ROOM_KEY` — رشتهٔ تصادفی جداگانه با حداقل ۳۲ نویسه.
    - `LITTLE_BROTHER_PASSWORD` — همان رمز ورود برادر در برنامه.
    - `BIG_SISTER_PASSWORD` — همان رمز ورود خواهر در برنامه. این رمز باید با رمز برادر متفاوت باشد.
-4. ذخیره کن و در GitHub وارد **Actions → Deploy Big Sister API to Cloudflare → Run workflow → Run workflow** شو. workflow خودش D1 را می‌سازد/پیدا می‌کند، شناسه را در پیکربندی موقت Runner جایگزین می‌کند، migrationها را اجرا می‌کند، Worker و Durable Object را deploy می‌کند، secrets را تنظیم می‌کند و endpoint سلامت را آزمایش می‌کند. پس از آن، تغییر در فایل‌های `cloudflare/**` در `main` یا `master` deployment خودکار را فعال می‌کند.
+4. ذخیره کن و در GitHub وارد **Actions → Deploy Big Sister API to Cloudflare → Run workflow → Run workflow** شو. workflow خودش D1 را می‌سازد/پیدا می‌کند، شناسه را در پیکربندی موقت Runner جایگزین می‌کند، migrationها را اجرا می‌کند، Worker و Durable Object را deploy می‌کند، secrets را تنظیم می‌کند و endpoint سلامت را آزمایش می‌کند. پس از آن، تغییر در کد، migrationها، `cloudflare/package.json`، `cloudflare/wrangler.toml` یا همین workflow در `main` یا `master` deployment خودکار را فعال می‌کند.
 
 در انتها URL معمولاً به شکل `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev` است. آن را در لاگ اجرای موفق Actions پیدا کن یا از **Cloudflare Dashboard → Workers & Pages → big-sister-sync-cloudflare** بردار. تست سلامت:
 `https://<URL-نهایی>/api/health`
