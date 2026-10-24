@@ -193,6 +193,7 @@ class _MainShellState extends State<MainShell> {
   bool locked = false;
   StreamSubscription<void>? _cloudSubscription;
   StreamSubscription<bool>? _cloudConnectionSubscription;
+  StreamSubscription<String?>? _cloudSyncErrorSubscription;
 
   @override
   void initState() {
@@ -215,6 +216,15 @@ class _MainShellState extends State<MainShell> {
           }
           if (mounted) setState(() {});
         });
+    _cloudSyncErrorSubscription = CloudService.instance.syncErrorChanges.listen((message) {
+      if (!mounted) return;
+      setState(() {});
+      if (message != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
+        );
+      }
+    });
     if (CloudService.instance.configured) {
       Future.microtask(_startupCloudSync);
     }
@@ -247,6 +257,7 @@ class _MainShellState extends State<MainShell> {
   void dispose() {
     _cloudSubscription?.cancel();
     _cloudConnectionSubscription?.cancel();
+    _cloudSyncErrorSubscription?.cancel();
     widget.storage.setCloudChangedCallback(null);
     super.dispose();
   }
