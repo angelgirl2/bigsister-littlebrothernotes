@@ -70,7 +70,7 @@ jobs:
             echo "An account workers.dev subdomain is already registered; keeping it unchanged."
           else
             # Stable, account/repository-specific candidate. Existing subdomains are never replaced.
-            candidate="angelgirl2-bigsister-1383200784"
+            candidate="bigsisternotes-angelgirl2-${CLOUDFLARE_ACCOUNT_ID:0:8}"
             echo "No workers.dev subdomain found; attempting one-time registration."
             created="$(curl --fail-with-body --silent --show-error -X PUT \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
