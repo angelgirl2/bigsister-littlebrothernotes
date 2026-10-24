@@ -670,26 +670,34 @@ class HomeTab extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                CloudService.instance.online
-                                    ? Icons.sync_rounded
-                                    : Icons.cloud_off_rounded,
+                                CloudService.instance.lastSyncError != null
+                                    ? Icons.warning_amber_rounded
+                                    : (CloudService.instance.online
+                                        ? Icons.sync_rounded
+                                        : Icons.cloud_off_rounded),
                                 size: 15,
-                                color: CloudService.instance.online
-                                    ? c.primary
-                                    : Colors.white38,
+                                color: CloudService.instance.lastSyncError != null
+                                    ? Colors.orangeAccent
+                                    : (CloudService.instance.online
+                                        ? c.primary
+                                        : Colors.white38),
                               ),
                               const SizedBox(width: 5),
                               Text(
                                 CloudService.instance.configured
-                                    ? (CloudService.instance.online
-                                          ? 'دفتر دوطرفه • آنلاین'
-                                          : 'دفتر دوطرفه • آفلاین')
+                                    ? (CloudService.instance.lastSyncError != null
+                                        ? 'دفتر دوطرفه • ذخیره نیاز به بررسی'
+                                        : (CloudService.instance.online
+                                            ? 'دفتر دوطرفه • آنلاین'
+                                            : 'دفتر دوطرفه • آفلاین'))
                                     : 'دفتر دوطرفه • راه‌اندازی نشده',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: CloudService.instance.online
-                                      ? c.primary
-                                      : Colors.white38,
+                                  color: CloudService.instance.lastSyncError != null
+                                      ? Colors.orangeAccent
+                                      : (CloudService.instance.online
+                                          ? c.primary
+                                          : Colors.white38),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
