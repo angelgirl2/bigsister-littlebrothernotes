@@ -54,21 +54,31 @@ jobs:
         shell: bash
         env:
           CONFIGURED_API_URL: ${{ vars.BIG_SISTER_API_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           api_url="${CONFIGURED_API_URL:-}"
           if [[ -z "$api_url" ]]; then
-            if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-              echo "::error::Neither BIG_SISTER_API_URL nor CLOUDFLARE_ACCOUNT_ID is set. Follow cloudflare/README_FA.md."
+            if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+              echo "::error::Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets, or set BIG_SISTER_API_URL as a repository variable."
               exit 1
             fi
-            account_prefix="${CLOUDFLARE_ACCOUNT_ID:0:8}"
-            worker_subdomain="bigsisternotes-angelgirl2-$account_prefix"
+            api="https://api.cloudflare.com/client/v4"
+            subdomain_response="$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")"
+            echo "$subdomain_response" | jq -e '.success == true' >/dev/null
+            worker_subdomain="$(echo "$subdomain_response" | jq -r '.result.subdomain // empty')"
+            if [[ -z "$worker_subdomain" ]]; then
+              echo "::error::No workers.dev subdomain is registered for this Cloudflare account. Run the Cloudflare deployment workflow first."
+              exit 1
+            fi
             api_url="https://big-sister-sync-cloudflare.$worker_subdomain.workers.dev"
           fi
           echo "url=$api_url" >> "$GITHUB_OUTPUT"
-          echo "API URL is configured for this APK."
+          echo "API URL is resolved from the registered Cloudflare subdomain."
 
       - name: Resolve Flutter packages
         run: flutter pub get
