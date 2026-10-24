@@ -282,7 +282,7 @@ class StorageService {
       if (resolveMedia == null) return source;
 
       final bytes = await resolveMedia(source);
-      if (bytes == null || bytes.isEmpty) return source;
+      if (bytes == null || bytes.isEmpty) throw StateError('cloud_media_download_failed');
       final id = _remoteMediaId(source);
       final name = _remoteMediaName(source);
       final fileName = _safeRemoteFileName(name, id);
