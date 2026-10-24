@@ -8,26 +8,30 @@
 - D1: حساب اتاق مشترک، نشست‌ها، یادداشت‌های همگام‌شده، پیام‌ها، نامه‌ها، تاریخچه تماس و metadata رسانه‌ها.
 - D1 BLOB chunks: فایل‌ها در قطعات 200 KiB ذخیره می‌شوند. این روش از الزام به ساخت اشتراک R2 دوری می‌کند تا نصب اولیه بتواند روی سهمیهٔ رایگان بماند. در عوض، رسانه‌ها بخشی از سهمیه و فضای D1 را مصرف می‌کنند و دانلود یک فایل بزرگ چند پرس‌وجوی کوچک دارد. این روش برای بار سبک دو نفره طراحی شده است.
 - Durable Objects: WebSocket زنده برای پیام، حضور آنلاین، تایپ‌کردن و سیگنال‌دهی تماس.
-- GitHub Actions: مخزن GitHub منبع اصلی کد است؛ هر Push به `main` یا `master` با تغییر `cloudflare/**` می‌تواند Worker را منتشر کند.
+- GitHub Actions: مخزن GitHub منبع اصلی کد است؛ پس از افزودن یک‌بارهٔ Secrets لازم، هر Push به `main` یا `master` با تغییر `cloudflare/**` به‌طور خودکار D1 را ایجاد/بازیابی می‌کند، migrationها را اجرا می‌کند، Worker را منتشر می‌کند و health check می‌زند. اجرای دستی از **Actions → Deploy Big Sister API to Cloudflare → Run workflow** نیز ممکن است.
 
 Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس ابری را نمی‌توان بدون قید و شرط برای همیشه رایگان تضمین کرد. عبور از سهمیه‌های روزانه می‌تواند درخواست‌های بیشتر را متوقف کند. این نسخه عمداً به R2 وابسته نیست، چون فعال کردن R2 وارد مرحلهٔ subscription/checkout می‌شود.
 
-## یک‌بار راه‌اندازی Cloudflare
+## راه‌اندازی یک‌باره (بعد از آن deploy خودکار است)
 
-1. در داشبورد Cloudflare، یک D1 database با نام دقیق `big-sister-db` بساز: <https://dash.cloudflare.com/> → **Storage & databases → D1 SQL Database**. در این مرحله هنوز چیزی از Railway حذف نمی‌شود.
-2. شناسهٔ UUID دیتابیس را کپی کن.
-3. در مخزن GitHub برو به **Settings → Secrets and variables → Actions → Variables → New repository variable** و متغیر `CF_D1_DATABASE_ID` را با UUID بالا ایجاد کن.
-4. در **Settings → Secrets and variables → Actions → Secrets** این Secrets را ایجاد کن:
-   - `CLOUDFLARE_API_TOKEN` — توکن با مجوزهای لازم برای Worker deployment و D1 migrations در همان حساب.
-   - `CLOUDFLARE_ACCOUNT_ID` — شناسهٔ حساب Cloudflare.
-   - `JWT_SECRET` — یک مقدار تصادفی قوی حداقل 32 نویسه.
-   - `SHARED_ROOM_KEY` — مقدار تصادفی قوی جداگانه، حداقل 32 نویسه.
-   - `LITTLE_BROTHER_PASSWORD` — همان رمز مورد استفادهٔ برادر در برنامه.
-   - `BIG_SISTER_PASSWORD` — همان رمز مورد استفادهٔ خواهر در برنامه.
-5. در شاخهٔ `main` این پوشه و workflow را به مخزن GitHub خودت Push کن. به **Actions → Deploy Big Sister API to Cloudflare → Run workflow** برو و اجرا را شروع کن. می‌توانی بعداً فقط با Push کردن تغییرات `cloudflare/` آن را منتشر کنی.
-6. در پایان، آدرس Worker معمولاً شبیه `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev` خواهد بود. در مرورگر یا PowerShell این endpoint را باز کن: `/api/health`. پاسخ سالم باید `"ok":true` و `"provider":"cloudflare-workers"` داشته باشد.
+برای امنیت، اتصال به حساب Cloudflare و افزودن رمزها باید یک بار توسط صاحب حساب انجام شود؛ این گفتگو نباید محل ارسال توکن‌ها یا رمزها باشد. بعد از این تنظیم یک‌باره، انتشار Worker از GitHub Actions خودکار می‌شود.
 
-> اگر ساخت D1 را از داشبورد انجام می‌دهی، دیتابیس باید در همان حساب Cloudflare باشد که `CLOUDFLARE_ACCOUNT_ID` به آن اشاره می‌کند. شناسهٔ D1 باید دقیقاً UUID همان دیتابیس باشد. Worker بدون secrets فوق عمداً login را قبول نمی‌کند.
+1. در Cloudflare به <https://dash.cloudflare.com/> برو، حساب درست را انتخاب کن و از صفحهٔ اصلی **Account ID** را کپی کن. لازم نیست D1 را دستی بسازی؛ workflow در صورت نبودن، پایگاه `big-sister-db` را ایجاد می‌کند و در صورت وجود آن را دوباره به کار می‌گیرد.
+2. در Cloudflare، **My Profile → API Tokens → Create Token** یک API Token محدود برای این deployment بساز. مجوزهای لازم: **Account Settings: Read**, **Workers Scripts: Edit**, **D1: Read** و **D1: Write**؛ این Worker از `workers.dev` استفاده می‌کند و نیازی به مجوز DNS یا دامنه ندارد. سطح دسترسی را تا حد ممکن به همان Account محدود کن.
+3. در GitHub مخزن را باز کن: **Settings → Secrets and variables → Actions → New repository secret**. موارد زیر را با نام دقیق ایجاد کن:
+   - `CLOUDFLARE_API_TOKEN` — توکنی که همین الان در Cloudflare ساختی.
+   - `CLOUDFLARE_ACCOUNT_ID` — شناسهٔ Account مرحلهٔ ۱.
+   - `JWT_SECRET` — رشتهٔ تصادفی قوی با حداقل ۳۲ نویسه.
+   - `SHARED_ROOM_KEY` — رشتهٔ تصادفی جداگانه با حداقل ۳۲ نویسه.
+   - `LITTLE_BROTHER_PASSWORD` — همان رمز ورود برادر در برنامه.
+   - `BIG_SISTER_PASSWORD` — همان رمز ورود خواهر در برنامه. این رمز باید با رمز برادر متفاوت باشد.
+4. ذخیره کن و در GitHub وارد **Actions → Deploy Big Sister API to Cloudflare → Run workflow → Run workflow** شو. workflow خودش D1 را می‌سازد/پیدا می‌کند، شناسه را در پیکربندی موقت Runner جایگزین می‌کند، migrationها را اجرا می‌کند، Worker و Durable Object را deploy می‌کند، secrets را تنظیم می‌کند و endpoint سلامت را آزمایش می‌کند. پس از آن، تغییر در فایل‌های `cloudflare/**` در `main` یا `master` deployment خودکار را فعال می‌کند.
+
+در انتها URL معمولاً به شکل `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev` است. آن را در لاگ اجرای موفق Actions پیدا کن یا از **Cloudflare Dashboard → Workers & Pages → big-sister-sync-cloudflare** بردار. تست سلامت:
+`https://<URL-نهایی>/api/health`
+باید `"ok":true` و `"provider":"cloudflare-workers"` برگرداند.
+
+> اگر workflow به خطای permission خورد، توکن را از نو با مجوزهای بالا و در همان حسابی که Account ID آن را ثبت کرده‌ای ایجاد کن. مقادیر secret را در Issue، کد، فایل README یا این چت قرار نده. workflow هیچ مقدار حساس را چاپ نمی‌کند.
 
 ## اتصال برنامهٔ Flutter
 
@@ -35,7 +39,7 @@ Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس 
 
 `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev`
 
-همچنین می‌توانی در GitHub repository **Variable** با نام `BIG_SISTER_API_URL` بسازی و مقدار آن را برابر URL نهایی Worker قرار بدهی؛ workflow ساخت APK موجود از این متغیر استفاده می‌کند. اگر این متغیر تنظیم نشود، رفتار قبلی و آدرس پیش‌فرض Railway حفظ می‌شود.
+بهترین راه برای تغییر بدون build مجدد، وارد کردن URL نهایی در بخش تنظیمات برنامه است. در این مخزن در حال حاضر workflow استقرار Cloudflare تعریف شده؛ این workflow APK نمی‌سازد و `BIG_SISTER_API_URL` را به‌صورت خودکار داخل APK قرار نمی‌دهد. اگر از سورس APK جدید بسازی، آدرس API را طبق دستور build موجود تنظیم کن؛ در صورت خالی‌ماندن مقدار، رفتار پیش‌فرض Railway حفظ می‌شود.
 
 ## داده‌های فعلی Railway — نکتهٔ حیاتی
 
