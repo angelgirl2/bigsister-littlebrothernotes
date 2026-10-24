@@ -9,6 +9,7 @@ on:
       - "cloudflare/migrations/**"
       - "cloudflare/package.json"
       - "cloudflare/wrangler.toml"
+      - ".github/workflows/deploy-cloudflare.yml"
 
 permissions:
   contents: read
