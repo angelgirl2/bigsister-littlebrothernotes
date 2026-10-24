@@ -115,20 +115,29 @@ jobs:
 
       - name: Check Worker health
         shell: bash
-        continue-on-error: true
         run: |
           set -euo pipefail
           worker_url="$(grep -Eo 'https://[A-Za-z0-9._-]+\.workers\.dev' "$RUNNER_TEMP/cloudflare-deploy.log" | tail -n 1 || true)"
           if [[ -z "$worker_url" ]]; then
-            echo "::warning::Deployment output did not include a workers.dev URL. Check the Cloudflare Workers dashboard and open /api/health."
-            exit 0
+            echo "::error::Deployment output did not include a workers.dev URL. Check Cloudflare Workers dashboard and deployment logs."
+            exit 1
           fi
+          healthy=false
           for attempt in {1..8}; do
             if curl --fail --silent --show-error "$worker_url/api/health" | tee "$RUNNER_TEMP/health.json" | jq -e '.ok == true and .provider == "cloudflare-workers"' >/dev/null; then
-              echo "Cloudflare Worker health check succeeded: $worker_url/api/health"
-              exit 0
+              healthy=true
+              break
             fi
             sleep 5
           done
-          echo "::warning::Worker deployed, but the health check did not return ready. Check D1 binding, Worker secrets, and workers.dev settings."
-          exit 0
+          if [[ "$healthy" != true ]]; then
+            echo "::error::Worker deployed, but /api/health did not return ready. Check D1 binding, migrations, Worker secrets, and workers.dev settings."
+            exit 1
+          fi
+          {
+            echo "### Big Sister Notes Cloudflare deployment succeeded"
+            echo ""
+            echo "- API URL: $worker_url"
+            echo "- Health: $worker_url/api/health"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Cloudflare Worker health check succeeded: $worker_url/api/health"
