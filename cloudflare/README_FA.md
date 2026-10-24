@@ -50,7 +50,7 @@ Cloudflare سهمیه‌های رایگان دارد، اما هیچ سرویس 
 
 `https://big-sister-sync-cloudflare.<SUBDOMAIN>.workers.dev`
 
-بهترین راه برای تغییر بدون build مجدد، وارد کردن URL نهایی در بخش تنظیمات برنامه است. در این مخزن در حال حاضر workflow استقرار Cloudflare تعریف شده؛ این workflow APK نمی‌سازد و `BIG_SISTER_API_URL` را به‌صورت خودکار داخل APK قرار نمی‌دهد. اگر از سورس APK جدید بسازی، آدرس API را طبق دستور build موجود تنظیم کن؛ در صورت خالی‌ماندن مقدار، رفتار پیش‌فرض Railway حفظ می‌شود.
+در برنامهٔ نصب‌شده، بهترین راه تغییر سرور وارد کردن URL اصلی در تنظیمات است؛ اگر آدرس قبلاً روی همان گوشی ذخیره شده باشد، آن مقدار بر مقدار پیش‌فرض APK اولویت دارد. مخزن اکنون دو workflow دارد: `Deploy Big Sister API to Cloudflare` برای backend و `Build Big Sister Notes Android APK` برای ساخت APK. workflow ساخت APK به‌طور خودکار URL Worker را از `CLOUDFLARE_ACCOUNT_ID` می‌سازد و با `--dart-define=BIG_SISTER_API_URL=...` داخل APK قرار می‌دهد. در صورت تعریف GitHub repository variable با نام `BIG_SISTER_API_URL`، آن مقدار سفارشی اولویت دارد. پس از ساخت موفق، فایل APK را در صفحهٔ اجرای workflow ساخت APK از بخش **Artifacts** دریافت کن.
 
 ## داده‌های فعلی Railway — نکتهٔ حیاتی
 
