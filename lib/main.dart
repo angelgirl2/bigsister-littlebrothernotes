@@ -20,6 +20,7 @@ import 'models/app_models.dart';
 import 'cloud/cloud_service.dart';
 import 'cloud/chat_models.dart';
 import 'screens/chat_screen.dart';
+import 'screens/games_screen.dart';
 import 'screens/cloud_login_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
@@ -193,7 +194,6 @@ class _MainShellState extends State<MainShell> {
   bool locked = false;
   StreamSubscription<void>? _cloudSubscription;
   StreamSubscription<bool>? _cloudConnectionSubscription;
-  StreamSubscription<String?>? _cloudSyncErrorSubscription;
 
   @override
   void initState() {
@@ -216,15 +216,6 @@ class _MainShellState extends State<MainShell> {
           }
           if (mounted) setState(() {});
         });
-    _cloudSyncErrorSubscription = CloudService.instance.syncErrorChanges.listen((message) {
-      if (!mounted) return;
-      setState(() {});
-      if (message != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
-        );
-      }
-    });
     if (CloudService.instance.configured) {
       Future.microtask(_startupCloudSync);
     }
@@ -257,7 +248,6 @@ class _MainShellState extends State<MainShell> {
   void dispose() {
     _cloudSubscription?.cancel();
     _cloudConnectionSubscription?.cancel();
-    _cloudSyncErrorSubscription?.cancel();
     widget.storage.setCloudChangedCallback(null);
     super.dispose();
   }
@@ -352,6 +342,7 @@ class _MainShellState extends State<MainShell> {
         onRefresh: (_) => refresh(),
       ),
       LettersTab(theme: widget.theme, cloud: CloudService.instance),
+      GamesTab(theme: widget.theme, cloud: CloudService.instance),
       SettingsTab(
         storage: widget.storage,
         theme: widget.theme,
@@ -411,6 +402,7 @@ class _MainShellState extends State<MainShell> {
                 backgroundColor: Colors.transparent,
                 height: 74,
                 selectedIndex: tab,
+                labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
                 onDestinationSelected: (i) => setState(() => tab = i),
                 destinations: [
                   NavigationDestination(
@@ -452,6 +444,11 @@ class _MainShellState extends State<MainShell> {
                     ),
                     selectedIcon: Icon(Icons.mail_rounded, color: c.primary),
                     label: 'نامه‌ها',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.sports_esports_outlined, color: Colors.white70),
+                    selectedIcon: Icon(Icons.sports_esports_rounded, color: c.primary),
+                    label: 'بازی‌ها',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.settings_outlined, color: Colors.white70),
@@ -665,39 +662,31 @@ class HomeTab extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         GestureDetector(
-                          onTap: () => onNavigate(5),
+                          onTap: () => onNavigate(6),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                CloudService.instance.lastSyncError != null
-                                    ? Icons.warning_amber_rounded
-                                    : (CloudService.instance.online
-                                        ? Icons.sync_rounded
-                                        : Icons.cloud_off_rounded),
+                                CloudService.instance.online
+                                    ? Icons.sync_rounded
+                                    : Icons.cloud_off_rounded,
                                 size: 15,
-                                color: CloudService.instance.lastSyncError != null
-                                    ? Colors.orangeAccent
-                                    : (CloudService.instance.online
-                                        ? c.primary
-                                        : Colors.white38),
+                                color: CloudService.instance.online
+                                    ? c.primary
+                                    : Colors.white38,
                               ),
                               const SizedBox(width: 5),
                               Text(
                                 CloudService.instance.configured
-                                    ? (CloudService.instance.lastSyncError != null
-                                        ? 'دفتر دوطرفه • ذخیره نیاز به بررسی'
-                                        : (CloudService.instance.online
-                                            ? 'دفتر دوطرفه • آنلاین'
-                                            : 'دفتر دوطرفه • آفلاین'))
+                                    ? (CloudService.instance.online
+                                          ? 'دفتر دوطرفه • آنلاین'
+                                          : 'دفتر دوطرفه • آفلاین')
                                     : 'دفتر دوطرفه • راه‌اندازی نشده',
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: CloudService.instance.lastSyncError != null
-                                      ? Colors.orangeAccent
-                                      : (CloudService.instance.online
-                                          ? c.primary
-                                          : Colors.white38),
+                                  color: CloudService.instance.online
+                                      ? c.primary
+                                      : Colors.white38,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
