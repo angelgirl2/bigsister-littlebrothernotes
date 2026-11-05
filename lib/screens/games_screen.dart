@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../models/app_models.dart';
 import '../cloud/cloud_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
@@ -573,7 +574,7 @@ class _GameRoomScreenState extends State<_GameRoomScreen> {
   Future<void> _startNewGame({Map<String, dynamic>? previous}) async {
     final keepScore = previous != null && previous['gameId'] == widget.game.id;
     final oldScores = keepScore ? _readScores(previous['scores']) : <String, int>{'me': 0, 'sister': 0};
-    final oldStarter = keepScore ? previous?['starter'].toString() ?? _myRole : _myRole;
+    final oldStarter = keepScore ? (previous!['starter']?.toString() ?? _myRole) : _myRole;
     final starter = keepScore ? (oldStarter == 'me' ? 'sister' : 'me') : _myRole;
     final now = DateTime.now().toUtc().toIso8601String();
     final next = <String, dynamic>{
