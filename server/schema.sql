@@ -118,3 +118,12 @@ CREATE TABLE IF NOT EXISTS call_history (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_call_history_room_created ON call_history(room_id, created_at DESC);
+
+-- One shared, revisioned game session for the two members of a private room.
+CREATE TABLE IF NOT EXISTS game_states (
+  room_id UUID PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  state JSONB NOT NULL DEFAULT '{}'::jsonb,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by UUID REFERENCES devices(id) ON DELETE SET NULL
+);

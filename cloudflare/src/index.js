@@ -384,6 +384,39 @@ async function handleApi(request, env) {
     return json(mergedResult, 200, request, env);
   }
 
+  // Revisioned game state is stored per private room and relayed only to its paired device.
+  if (method === 'GET' && path === '/api/games/state') {
+    await env.DB.prepare(`INSERT OR IGNORE INTO game_states(room_id,state,revision,updated_at)
+      VALUES(?,'{}',0,?)`).bind(user.roomId, nowIso()).run();
+    const row = await env.DB.prepare('SELECT state,revision,updated_at FROM game_states WHERE room_id = ?').bind(user.roomId).first();
+    return json({ state: parseJson(row?.state, null), revision: Number(row?.revision || 0), updatedAt: row?.updated_at || null }, 200, request, env);
+  }
+  if (method === 'PUT' && path === '/api/games/state') {
+    const body = await readBody(request);
+    const incoming = body?.state;
+    const expectedRevision = Number(body?.expectedRevision);
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming) ||
+        !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      return json({ error: 'invalid_game_state' }, 400, request, env);
+    }
+    const serialized = JSON.stringify(incoming);
+    if (encoder.encode(serialized).length > 64000) return json({ error: 'game_state_too_large' }, 413, request, env);
+
+    // The Durable Object serializes writes so both devices cannot commit from the same stale revision.
+    const stub = env.REALTIME.get(env.REALTIME.idFromName(String(user.roomId)));
+    const saveResponse = await stub.fetch('https://realtime.internal/game/save', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId: user.roomId, deviceId: user.deviceId, state: incoming, expectedRevision }),
+    });
+    const saved = await saveResponse.json().catch(() => ({ error: 'game_state_save_failed' }));
+    if (saveResponse.status === 409) return json(saved, 409, request, env);
+    if (!saveResponse.ok) return json({ error: saved?.error || 'game_state_save_failed' }, 500, request, env);
+    const result = { ...saved, updatedBy: user.deviceId };
+    await broadcast(env, user.roomId, 'game:state', result, user.deviceId);
+    return json(result, 200, request, env);
+  }
+
   if (method === 'GET' && path === '/api/chat/messages') {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 100);
     const before = url.searchParams.get('before');
@@ -553,7 +586,7 @@ async function handleApi(request, env) {
 }
 
 export class RealtimeRoom {
-  constructor(state, env) { this.state = state; this.env = env; this.snapshotQueue = Promise.resolve(); }
+  constructor(state, env) { this.state = state; this.env = env; this.snapshotQueue = Promise.resolve(); this.gameQueue = Promise.resolve(); }
 
   sockets() { return this.state.getWebSockets(); }
   attachment(ws) { try { return ws.deserializeAttachment() || {}; } catch { return {}; } }
@@ -593,6 +626,52 @@ export class RealtimeRoom {
       } catch (error) {
         console.error('snapshot_merge_failed', String(error?.message || error));
         return new Response(JSON.stringify({ error: 'sync_failed' }), { status: 500, headers: { 'content-type': 'application/json' } });
+      }
+    }
+    if (url.pathname === '/game/save' && request.method === 'POST') {
+      const body = await readBody(request);
+      const roomId = String(body.roomId || '');
+      const deviceId = String(body.deviceId || '');
+      const incoming = body.state;
+      const expectedRevision = Number(body.expectedRevision);
+      if (!roomId || !deviceId || !incoming || typeof incoming !== 'object' || Array.isArray(incoming) ||
+          !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+        return new Response(JSON.stringify({ error: 'invalid_game_state' }), { status: 400, headers: { 'content-type': 'application/json' } });
+      }
+      const serialized = JSON.stringify(incoming);
+      if (encoder.encode(serialized).length > 64000) {
+        return new Response(JSON.stringify({ error: 'game_state_too_large' }), { status: 413, headers: { 'content-type': 'application/json' } });
+      }
+      const operation = this.gameQueue.then(async () => {
+        const stamp = nowIso();
+        await this.env.DB.prepare(`INSERT OR IGNORE INTO game_states(room_id,state,revision,updated_at,updated_by)
+          VALUES(?,'{}',0,?,?)`).bind(roomId, stamp, deviceId).run();
+        const existing = await this.env.DB.prepare('SELECT state,revision,updated_at FROM game_states WHERE room_id = ?').bind(roomId).first();
+        const currentRevision = Number(existing?.revision || 0);
+        if (currentRevision !== expectedRevision) {
+          return {
+            conflict: true,
+            state: parseJson(existing?.state, null),
+            revision: currentRevision,
+            updatedAt: existing?.updated_at || null,
+          };
+        }
+        const revision = currentRevision + 1;
+        const updatedAt = nowIso();
+        await this.env.DB.prepare(`UPDATE game_states SET state = ?, revision = ?, updated_at = ?, updated_by = ? WHERE room_id = ?`)
+          .bind(serialized, revision, updatedAt, deviceId, roomId).run();
+        return { state: incoming, revision, updatedAt };
+      });
+      this.gameQueue = operation.then(() => undefined, () => undefined);
+      try {
+        const result = await operation;
+        return new Response(JSON.stringify(result), {
+          status: result.conflict ? 409 : 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      } catch (error) {
+        console.error('game_state_save_failed', String(error?.message || error));
+        return new Response(JSON.stringify({ error: 'game_state_save_failed' }), { status: 500, headers: { 'content-type': 'application/json' } });
       }
     }
     if (url.pathname === '/broadcast' && request.method === 'POST') {

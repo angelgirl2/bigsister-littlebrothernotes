@@ -359,6 +359,86 @@ app.put('/api/sync/snapshot', auth, async (req, res) => {
   }
 });
 
+// Shared live games are isolated to the already-authenticated two-person room.
+app.get('/api/games/state', auth, async (req, res) => {
+  await touchDevice(req.user.deviceId);
+  await pool.query(
+    `INSERT INTO game_states(room_id, state, revision, updated_at)
+     VALUES ($1, '{}'::jsonb, 0, now()) ON CONFLICT(room_id) DO NOTHING`,
+    [req.user.roomId],
+  );
+  const result = await pool.query(
+    'SELECT state, revision, updated_at FROM game_states WHERE room_id = $1',
+    [req.user.roomId],
+  );
+  const row = result.rows[0];
+  return res.json({
+    state: row?.state || null,
+    revision: Number(row?.revision || 0),
+    updatedAt: row?.updated_at || null,
+  });
+});
+
+app.put('/api/games/state', auth, async (req, res) => {
+  const incoming = req.body?.state;
+  const expectedRevision = Number(req.body?.expectedRevision);
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming) ||
+      !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    return res.status(400).json({ error: 'invalid_game_state' });
+  }
+  const serialized = JSON.stringify(incoming);
+  if (Buffer.byteLength(serialized, 'utf8') > 64000) {
+    return res.status(413).json({ error: 'game_state_too_large' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO game_states(room_id, state, revision, updated_at)
+       VALUES ($1, '{}'::jsonb, 0, now()) ON CONFLICT(room_id) DO NOTHING`,
+      [req.user.roomId],
+    );
+    const existing = await client.query(
+      'SELECT state, revision, updated_at FROM game_states WHERE room_id = $1 FOR UPDATE',
+      [req.user.roomId],
+    );
+    const row = existing.rows[0];
+    const currentRevision = Number(row?.revision || 0);
+    if (currentRevision !== expectedRevision) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        conflict: true,
+        state: row?.state || null,
+        revision: currentRevision,
+        updatedAt: row?.updated_at || null,
+      });
+    }
+
+    const revision = currentRevision + 1;
+    const saved = await client.query(
+      `UPDATE game_states SET state = $2::jsonb, revision = $3, updated_at = now(), updated_by = $4
+       WHERE room_id = $1 RETURNING state, revision, updated_at`,
+      [req.user.roomId, serialized, revision, req.user.deviceId],
+    );
+    await client.query('COMMIT');
+    const result = {
+      state: saved.rows[0].state,
+      revision: Number(saved.rows[0].revision),
+      updatedAt: saved.rows[0].updated_at,
+      updatedBy: req.user.deviceId,
+    };
+    io.to(`room:${req.user.roomId}`).emit('game:state', result);
+    return res.json(result);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('game_state_save_failed', error?.message || error);
+    return res.status(500).json({ error: 'game_state_save_failed' });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/chat/messages', auth, async (req, res) => {
   await touchDevice(req.user.deviceId);
   const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 100);
