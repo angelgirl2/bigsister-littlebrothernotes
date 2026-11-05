@@ -18,6 +18,10 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
+        // Mirror Google Maven to avoid intermittent dl.google.com resolution/download failures.
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/gradle-plugin")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -42,6 +46,9 @@ dependencyResolutionManagement {
             ?: "https://storage.googleapis.com"
 
     repositories {
+        // Mirror Google Maven for Android plugin and lint artifacts.
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
         maven("$storageUrl/download.flutter.io")
