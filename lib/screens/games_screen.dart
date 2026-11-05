@@ -573,9 +573,10 @@ class _GameRoomScreenState extends State<_GameRoomScreen> {
 
   Future<void> _startNewGame({Map<String, dynamic>? previous}) async {
     final keepScore = previous != null && previous['gameId'] == widget.game.id;
-    final oldScores = keepScore
-        ? _readScores(previous['scores'])
-        : <String, int>{'me': 0, 'sister': 0};
+    var oldScores = <String, int>{'me': 0, 'sister': 0};
+    if (keepScore && previous != null) {
+      oldScores = _readScores(previous['scores']);
+    }
     var oldStarter = _myRole;
     if (keepScore && previous != null) {
       final previousStarter = previous['starter'];
