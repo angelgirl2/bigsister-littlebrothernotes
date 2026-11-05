@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../models/app_models.dart';
+import '../models/app_models.dart' show AppThemeChoice;
 import '../cloud/cloud_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
@@ -573,9 +573,18 @@ class _GameRoomScreenState extends State<_GameRoomScreen> {
 
   Future<void> _startNewGame({Map<String, dynamic>? previous}) async {
     final keepScore = previous != null && previous['gameId'] == widget.game.id;
-    final oldScores = keepScore ? _readScores(previous['scores']) : <String, int>{'me': 0, 'sister': 0};
-    final oldStarter = keepScore ? (previous!['starter']?.toString() ?? _myRole) : _myRole;
-    final starter = keepScore ? (oldStarter == 'me' ? 'sister' : 'me') : _myRole;
+    final oldScores = keepScore
+        ? _readScores(previous['scores'])
+        : <String, int>{'me': 0, 'sister': 0};
+    var oldStarter = _myRole;
+    if (keepScore && previous != null) {
+      final previousStarter = previous['starter'];
+      oldStarter = previousStarter?.toString() ?? _myRole;
+    }
+    var starter = _myRole;
+    if (keepScore) {
+      starter = oldStarter == 'me' ? 'sister' : 'me';
+    }
     final now = DateTime.now().toUtc().toIso8601String();
     final next = <String, dynamic>{
       'gameId': widget.game.id,
@@ -1980,43 +1989,6 @@ class _SoloGameScreenState extends State<_SoloGameScreen> {
       } else {
         setState(() => _familySeconds--);
       }
-    });
-  }
-
-  void _startNextRound() {
-    setState(() {
-      _round++;
-      _finished = false;
-      _busy = false;
-      _status = 'دور تازه شروع شد.';
-      _ticBoard = List<String?>.filled(9, null);
-      _connectBoard = List<String?>.filled(42, null);
-      _rpsRound = 1;
-      _lastRpsResult = '';
-      _memoryDeck = List<String>.from(_memorySymbols)..addAll(_memorySymbols);
-      _memoryDeck.shuffle(_random);
-      _memoryRevealed.clear();
-      _memoryMatched.clear();
-      _memoryAttempts = 0;
-      _riddleOrder = List<int>.generate(_riddles.length, (index) => index)..shuffle(_random);
-      _riddleIndex = 0;
-      _mathOrder = List<int>.generate(_mathQuestions.length, (index) => index)..shuffle(_random);
-      _mathIndex = 0;
-      final words = List<String>.from(_hangmanWords)..shuffle(_random);
-      _hangmanWord = _normalizeWord(words.first);
-      _hangmanGuessed.clear();
-      _hangmanWrong = 0;
-      final seeds = List<String>.from(_wordSeeds)..shuffle(_random);
-      _chainWords = [seeds.first];
-      _chainMoves = 0;
-      _secretNumber = _random.nextInt(50) + 1;
-      _numberAttempts = 0;
-      _numberHint = '';
-      _mines.clear();
-      final positions = List<int>.generate(25, (index) => index)..shuffle(_random);
-      _mines.addAll(positions.take(5));
-      _mineRevealed.clear();
-      _explodedMine = null;
     });
   }
 
